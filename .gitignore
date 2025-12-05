@@ -1,0 +1,20 @@
+#Virtual Env
+Venv/
+venv/
+.env/
+#pycache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+#Database
+*.sqlite
+*.db
+*.db-journal
+#lohs nd exports
+reports/logs/
+reports/exports/
+#config files
+config/config.ini
+config/db_config.py
+tests/__pycache__/
