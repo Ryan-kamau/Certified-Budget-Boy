@@ -12,8 +12,8 @@ __pycache__/
 *.db
 *.db-journal
 #lohs nd exports
-reports/logs/
-reports/exports/
+reports/logs
+reports/exports
 #config files
 config/config.ini
 config/db_config.py
