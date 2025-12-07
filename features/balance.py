@@ -337,3 +337,81 @@ class BalanceService:
         else:
             raise BalanceValidationError(f"Unknown transaction type: {transaction_type}")
     
+    def reverse_transaction_change(self, transaction_id: int, transaction_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Reverse a transaction's balance effects.
+        
+        Used when deleting or updating transactions.
+        
+        Args:
+            transaction_id: ID of the transaction
+            transaction_data: Original transaction data
+        
+        Returns:
+            Dict with reversal details
+        """
+        return self._reverse_transaction(transaction_id, transaction_data)
+    
+    # ================================================================
+    # PUBLIC API - BALANCE QUERIES
+    # ================================================================
+    
+    def get_account_balance(self, account_id: int) -> Dict[str, Any]:
+        """Get current balance for a specific account"""
+        account = self.account_model.get_account(account_id)
+        
+        return {
+            "account_id": account_id,
+            "account_name": account.get("name"),
+            "account_type": account.get("account_type"),
+            "current_balance": float(account.get("balance")),
+            "opening_balance": float(account.get("opening_balance")),
+            "is_active": account.get("is_active"),
+            "owner": account.get("owned_by_username")
+        }
+    
+    def get_all_balances(self, include_deleted: bool = False) -> List[Dict[str, Any]]:
+        """Get balances for all user's accounts"""
+        accounts_result = self.account_model.list_account(
+            include_deleted=include_deleted,
+            global_view=False
+        )
+        
+        balances = []
+        for account in accounts_result.get("accounts", []):
+            balances.append({
+                "account_id": account["account_id"],
+                "account_name": account["name"],
+                "account_type": account["account_type"],
+                "current_balance": float(account["balance"]),
+                "opening_balance": float(account["opening_balance"]),
+                "is_active": account["is_active"],
+                "is_deleted": account["is_deleted"]
+            })
+        
+        return balances
+    
+    def get_net_worth(self) -> Dict[str, Any]:
+        """Calculate total net worth across all accounts"""
+        balances = self.get_all_balances(include_deleted=False)
+        
+        total = sum(b["current_balance"] for b in balances if b["is_active"])
+        
+        # Break down by account type
+        by_type = {}
+        for balance in balances:
+            if not balance["is_active"]:
+                continue
+            
+            acc_type = balance["account_type"]
+            if acc_type not in by_type:
+                by_type[acc_type] = 0
+            by_type[acc_type] += balance["current_balance"]
+        
+        return {
+            "user_id": self.user_id,
+            "total_net_worth": total,
+            "active_accounts": len([b for b in balances if b["is_active"]]),
+            "breakdown_by_type": by_type,
+            "timestamp": datetime.now().isoformat()
+        }
