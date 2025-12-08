@@ -164,7 +164,7 @@ class BalanceService:
             old_balance=old_balance,
             new_balance=new_balance,
             change_amount=amount,
-            action="deposit"
+            action="deposit_income"
         )
         
         return {
@@ -195,7 +195,7 @@ class BalanceService:
             old_balance=old_balance,
             new_balance=new_balance,
             change_amount=-amount,
-            action="withdraw"
+            action="withdraw_expense"
         )
         
         return {
@@ -239,7 +239,7 @@ class BalanceService:
             old_balance=source_old,
             new_balance=source_new,
             change_amount=-amount,
-            action="transfer"
+            action="transfer_out"
         )
         
         self._log_balance_change(
@@ -248,7 +248,7 @@ class BalanceService:
             old_balance=dest_old,
             new_balance=dest_new,
             change_amount=amount,
-            action="transfer"
+            action="transfer_in"
         )
         
         return {
@@ -415,3 +415,147 @@ class BalanceService:
             "breakdown_by_type": by_type,
             "timestamp": datetime.now().isoformat()
         }
+
+    # ================================================================
+    # PUBLIC API - BALANCE REBUILDING
+    # ================================================================
+    
+    def rebuild_account_balance(self, account_id: int) -> Dict[str, Any]:
+        """
+        Recalculate account balance from scratch by summing all transactions.
+        
+        Useful when:
+        - Balance seems incorrect
+        - After importing historical data
+        - After bulk transaction operations
+        """
+        account = self._validate_account_active(account_id)
+        old_balance = float(account.get("balance", 0))
+        opening_balance = float(account.get("opening_balance", 0))
+        
+        # Query all transactions for this account
+        # TODO: Update based on your TransactionModel's query method
+        sql = """
+            SELECT transaction_id, transaction_type, amount, account_id,
+                   source_account_id, destination_account_id
+            FROM transactions
+            WHERE (account_id = %s OR source_account_id = %s OR destination_account_id = %s)
+              AND is_deleted = 0 AND user_id = %s
+            ORDER BY transaction_date ASC, transaction_id ASC
+        """
+        
+        transactions = self._execute(sql, (account_id, account_id, account_id, self.user_id), fetchall=True)
+        
+        # Start with opening balance
+        calculated_balance = opening_balance
+        
+        # Apply each transaction
+        for tx in transactions:
+            trans_type = tx["transaction_type"]
+            amount = float(tx["amount"])
+            
+            if trans_type == "income" and tx["account_id"] == account_id:
+                calculated_balance += amount
+            
+            elif trans_type == "expense" and tx["account_id"] == account_id:
+                calculated_balance -= amount
+            
+            elif trans_type == "transfer":
+                if tx["source_account_id"] == account_id:
+                    calculated_balance -= amount
+                elif tx["destination_account_id"] == account_id:
+                    calculated_balance += amount
+        
+        # Update account with calculated balance
+        self.account_model.update_account(account_id, balance=calculated_balance)
+        
+        # Log the rebuild
+        self._log_balance_change(
+            account_id=account_id,
+            transaction_id=None,
+            old_balance=old_balance,
+            new_balance=calculated_balance,
+            change_amount=calculated_balance - old_balance,
+            action="balance_rebuild",
+            notes=f"Rebuilt from {len(transactions)} transactions"
+        )
+        
+        return {
+            "account_id": account_id,
+            "old_balance": old_balance,
+            "new_balance": calculated_balance,
+            "difference": calculated_balance - old_balance,
+            "transactions_processed": len(transactions)
+        }
+    
+    def rebuild_all_balnces(self) -> Dict[str, Any]:
+        """Rebuild balances for all user's accounts"""
+        all_accounts = self.account_model.list_account(
+            include_deleted=False, global_view=False
+        )
+
+        results = []
+        for account in all_accounts.get("accounts", []):
+            if account["is_active"]:
+                try:
+                    result = self.rebuild_account_balance(account["account_id"])
+                    results.append(result)
+                except Exception as e:
+                    results.append({
+                        "account_id": account["account_id"],
+                        "error": str(e)
+                    })
+        
+        return {
+            "user_id": self.user_id,
+            "accounts_rebuilt": len(results),
+            "results": results,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    # ================================================================
+    # CRON-STYLE RUNNER (Optional)
+    # ================================================================
+    
+    def run_balance_health_check(self) -> Dict[str, Any]:
+        """
+        Run periodic health check on all balances.
+        
+        Can be called by cron/scheduler to:
+        - Detect anomalies
+        - Flag negative balances
+        - Identify inactive accounts with transactions
+        """
+        results = {
+            "user_id": self.user_id,
+            "timestamp": datetime.now().isoformat(),
+            "checks": []
+        }
+        
+        balances = self.get_all_balances(include_deleted=False)
+        
+        for balance in balances:
+            check = {
+                "account_id": balance["account_id"],
+                "account_name": balance["account_name"],
+                "issues": []
+            }
+            
+            # Check for negative balance
+            if balance["current_balance"] < 0:
+                check["issues"].append(f"Negative balance: {balance['current_balance']}")
+            
+            # Check for large deviation from opening
+            opening = balance["opening_balance"]
+            current = balance["current_balance"]
+            if opening != 0:
+                deviation = abs((current - opening) / opening) * 100
+                if deviation > 500:  # More than 500% change
+                    check["issues"].append(f"Large deviation: {deviation:.2f}%")
+            
+            if check["issues"]:
+                results["checks"].append(check)
+        
+        results["total_issues"] = len(results["checks"])
+        
+        return results
