@@ -123,6 +123,17 @@ class AccountModel:
         # Convert DB row keys into appropriate types if needed
         return Accounts(**row)
     
+    #public helper
+    def audit_logs(self, accout_id: int,
+            action: str,
+            transaction_id: int,
+            old_balance: float,
+            new_balance: float,
+            new_values: Dict[str, Any]):
+        return self._audit_logs(account_id=accout_id, action=action, transaction_id=transaction_id,
+                                old_balance=old_balance, new_balance=new_balance, new_values=new_values)
+    
+    
     #--------------------
     # CRUD OPERATIONS
     #--------------------
