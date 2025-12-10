@@ -30,7 +30,7 @@ def main():
         return None
 
     um = UserModel(conn)
-    auth_result = um.authenticate("Reynolds", "Alivepool")
+    auth_result = um.authenticate("Dexter", "Butcher")
     if not auth_result.get("success"):
         print(auth_result.get("message", "Login failed."))
         return

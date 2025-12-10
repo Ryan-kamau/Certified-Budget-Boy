@@ -80,11 +80,13 @@ class BalanceService:
                 cursor.execute(sql, params)
                 if fetchone:
                     result = cursor.fetchone()
-                    self.conn.commit()
+                    if not sql.strip().upper().startswith("SELECT"):
+                        self.conn.commit()
                     return result
                 if fetchall:
                     result = cursor.fetchall()
-                    self.conn.commit()
+                    if not sql.strip().upper().startswith("SELECT"):
+                        self.conn.commit()
                     return result
                 
                 self.conn.commit()
@@ -121,7 +123,7 @@ class BalanceService:
         Log balance changes for audit trail.
         Uses AccountModel's audit logging system.
         """
-        self.account_model._audit_logs(
+        self.account_model.audit_logs(
             account_id=account_id,
             action=action,
             transaction_id=transaction_id,
@@ -488,7 +490,7 @@ class BalanceService:
             "transactions_processed": len(transactions)
         }
     
-    def rebuild_all_balnces(self) -> Dict[str, Any]:
+    def rebuild_all_balances(self) -> Dict[str, Any]:
         """Rebuild balances for all user's accounts"""
         all_accounts = self.account_model.list_account(
             include_deleted=False, global_view=False

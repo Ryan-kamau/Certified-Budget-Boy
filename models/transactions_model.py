@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict, field
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import date, datetime
+from features.balance import BalanceService
 import mysql.connector
 import json
 
@@ -42,6 +43,9 @@ class Transaction:
     transaction_type: str
     payment_method: str
     transaction_date: date
+    account_id: Optional[int]  = None
+    source_account_id: Optional[int] = None  
+    destination_account_id: Optional[int] = None  
     is_global: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -53,7 +57,6 @@ class Transaction:
         data = asdict(self)
         data["children"] = [child.to_dict() for child in self.children]
         return data
-    
 # ==========================
 # Model: TransactionModel
 # ==========================
@@ -66,6 +69,7 @@ class TransactionModel:
         self.current_user = current_user or {}
         self.user_id = self.current_user.get("user_id")
         self.role = self.current_user.get("role")
+        self.balance_service = BalanceService(connection, current_user)
 
     # ------------
     # Internal Helpers
@@ -171,6 +175,9 @@ class TransactionModel:
             transaction_type=row["transaction_type"],
             payment_method=row["payment_method"],
             transaction_date=row["transaction_date"],
+            account_id=row.get("account_id"),
+            source_account_id=row.get("source_account_id"),
+            destination_account_id=row.get("destination_account_id"),
             is_global=row.get("is_global"),
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
@@ -195,6 +202,36 @@ class TransactionModel:
             child.children = self._get_children_recursive(child.category_id, include_deleted)
             children.append(child)
         return children
+
+    def _validate_transaction_accounts(self, tx_data: Dict[str, Any]):
+        """
+        Validate that account fields are correctly provided based on transaction type.
+        
+        Rules:
+        - income/expense: requires account_id
+        - transfer: requires source_account_id and destination_account_id
+        """
+        trans_type = tx_data.get("transaction_type")
+        
+        if trans_type in ["income", "expense"]:
+            if not tx_data.get("account_id"):
+                raise TransactionValidationError(
+                    f"{trans_type} transaction requires 'account_id'"
+                )
+        
+        elif trans_type == "transfer":
+            if not tx_data.get("source_account_id"):
+                raise TransactionValidationError(
+                    "transfer transaction requires 'source_account_id'"
+                )
+            if not tx_data.get("destination_account_id"):
+                raise TransactionValidationError(
+                    "transfer transaction requires 'destination_account_id'"
+                )
+            if tx_data.get("source_account_id") == tx_data.get("destination_account_id"):
+                raise TransactionValidationError(
+                    "Cannot transfer to the same account"
+                )
     
     # ------------
     # Public CRUD API
@@ -206,12 +243,15 @@ class TransactionModel:
         if missing:
             raise TransactionValidationError(f"Missing required fields: {missing}")
         
+        self._validate_transaction_accounts(tx_data)
+        
         current_user_id = self.user_id
         query = """
             INSERT INTO transactions 
             (user_id, category_id, parent_transaction_id, title, description, amount, 
-             transaction_type, payment_method, transaction_date, is_global)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             transaction_type, payment_method, transaction_date, is_global,
+             account_id, source_account_id, destination_account_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             current_user_id,
@@ -224,12 +264,43 @@ class TransactionModel:
             tx_data.get("payment_method", "mobile_money"),
             tx_data["transaction_date"],
             tx_data.get("is_global", 0),
+            tx_data.get("account_id"),
+            tx_data.get("source_account_id"),
+            tx_data.get("destination_account_id"),
         )
 
         new_id = self._execute(query, params)
+        # ✨ NEW: Apply balance changes automatically
+        try:
+            self.balance_service.apply_transaction_change(
+                transaction_id=new_id,
+                transaction_type=tx_data["transaction_type"],
+                amount=float(tx_data["amount"]),
+                account_id=tx_data.get("account_id"),
+                source_account_id=tx_data.get("source_account_id"),
+                destination_account_id=tx_data.get("destination_account_id"),
+                allow_overdraft=tx_data.get("allow_overdraft", False)
+            )
+        except Exception as e:
+            # Rollback transaction if balance update fails
+            self._execute(
+                "DELETE FROM transactions WHERE transaction_id = %s",
+                (new_id,)
+            )
+            raise TransactionValidationError(
+                f"Transaction created but balance update failed: {str(e)}"
+            )
+    
         self._audit_log(new_id, action="INSERT",
-                        new_values={"name": tx_data["title"], "amount": tx_data["amount"], "trans_type": tx_data["transaction_type"],
-                                    "transaction_date": tx_data["transaction_date"]}
+                        new_values={
+                            "name": tx_data["title"], 
+                            "amount": tx_data["amount"], 
+                            "trans_type": tx_data["transaction_type"],
+                            "transaction_date": tx_data["transaction_date"],
+                            "account_id": tx_data.get("account_id"),
+                            "source_account_id": tx_data.get("source_account_id"),
+                            "destination_account_id": tx_data.get("destination_account_id"),
+                        }
                         )
         return self.get_transaction(new_id)
     
@@ -237,10 +308,19 @@ class TransactionModel:
         """Fetch a transaction (optionally including nested children)."""
         filter_tenant = self._tenant_filter("t", global_view=global_view)
         query = f"""
-                SELECT t.*, c.name AS category_name, c.description AS category_description, u.username AS owned_by_username
+                SELECT t.*, 
+                       c.name AS category_name, 
+                       c.description AS category_description, 
+                       u.username AS owned_by_username,
+                       a.name AS account_name,
+                       sa.name AS source_account_name,
+                       da.name AS destination_account_name
                 FROM transactions t
                 LEFT JOIN categories c ON t.category_id = c.category_id
                 LEFT JOIN users u ON t.user_id = u.user_id
+                LEFT JOIN accounts a ON t.account_id = a.account_id
+                LEFT JOIN accounts sa ON t.source_account_id = sa.account_id
+                LEFT JOIN accounts da ON t.destination_account_id = da.account_id
                 WHERE t.transaction_id = %s AND {filter_tenant}
                 """
         if not include_deleted:
@@ -262,6 +342,9 @@ class TransactionModel:
         result["category_name"] = rows[0].get("category_name")
         result["category_description"] = rows[0].get("category_description")
         result["owned_by_username"] = rows[0].get("owned_by_username")
+        result["account_name"] = rows[0].get("account_name")
+        result["source_account_name"] = rows[0].get("source_account_name")
+        result["destination_account_name"] = rows[0].get("destination_account_name")
         return result
     
     def update_transaction(self, transaction_id: int, **updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -269,7 +352,23 @@ class TransactionModel:
         if not updates:
             raise TransactionValidationError("No fields provided for update.")
         
-        trans = self.get_transaction(transaction_id)
+        old_trans = self.get_transaction(transaction_id)
+        # If updating amount or accounts, validate and handle balance changes
+        balance_affecting_fields = ["amount", "transaction_type", "account_id", 
+                                   "source_account_id", "destination_account_id"]
+        affects_balance = any(field in updates for field in balance_affecting_fields)
+        
+        if affects_balance and self.balance_service:
+            # Reverse old transaction's balance effects
+            try:
+                self.balance_service.reverse_transaction_change(
+                    transaction_id=transaction_id,
+                    transaction_data=old_trans
+                )
+            except Exception as e:
+                raise TransactionValidationError(
+                    f"Failed to reverse old balance: {str(e)}"
+                )
         
         fields = ", ".join((f"{k}=%s" for k in updates.keys()))
         params = tuple(updates.values()) + (transaction_id, self.user_id,)
@@ -277,11 +376,45 @@ class TransactionModel:
         result = self._execute(
             f"UPDATE transactions SET {fields} WHERE transaction_id = %s AND user_id = %s", params
         )
-        print(result)
         if result == 0:
             raise TransactionNotFoundError(f"Transaction {transaction_id} not found or unchanged.")
         
-        self._audit_log(transaction_id, action= "UPDATE", old_values=trans, new_values= updates, changed_fields= list[updates.keys()])
+        # Apply new transaction's balance effects
+        if affects_balance and self.balance_service:
+            # Get updated transaction data
+            updated_trans = self.get_transaction(transaction_id)
+            
+            try:
+                self.balance_service.apply_transaction_change(
+                    transaction_id=transaction_id,
+                    transaction_type=updated_trans["transaction_type"],
+                    amount=float(updated_trans["amount"]),
+                    account_id=updated_trans.get("account_id"),
+                    source_account_id=updated_trans.get("source_account_id"),
+                    destination_account_id=updated_trans.get("destination_account_id"),
+                    allow_overdraft=updates.get("allow_overdraft", False)
+                )
+            except Exception as e:
+                # Try to reapply old balance if new one fails
+                try:
+                    self.balance_service.apply_transaction_change(
+                        transaction_id=transaction_id,
+                        transaction_type=old_trans["transaction_type"],
+                        amount=float(old_trans["amount"]),
+                        account_id=old_trans.get("account_id"),
+                        source_account_id=old_trans.get("source_account_id"),
+                        destination_account_id=old_trans.get("destination_account_id"),
+                        allow_overdraft=True
+                    )
+                except:
+                    pass
+                
+                raise TransactionValidationError(
+                    f"Transaction updated but balance update failed: {str(e)}"
+                )
+        
+        self._audit_log(transaction_id, action="UPDATE", old_values=old_trans, 
+                       new_values=updates, changed_fields=list(updates.keys()))
         updated = self.get_transaction(transaction_id)
         return {"success": True, "message": "Transaction updated successfully.", "update": updated}
     
@@ -292,6 +425,7 @@ class TransactionModel:
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         category_id: Optional[int] = None,
+        account_id: Optional[int] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None, *,
         include_deleted: bool = False,
@@ -300,10 +434,19 @@ class TransactionModel:
         """Filter transactions by user/date/category with optional pagination."""
         filter_tenant = self._tenant_filter("t", global_view=global_view)
         query = f"""
-                SELECT t.*, c.name AS category_name, c.description AS category_description, u.username AS owned_by_username
+                SELECT t.*, 
+                       c.name AS category_name, 
+                       c.description AS category_description, 
+                       u.username AS owned_by_username,
+                       a.name AS account_name,
+                       sa.name AS source_account_name,
+                       da.name AS destination_account_name
                 FROM transactions t
                 LEFT JOIN categories c ON t.category_id = c.category_id
                 LEFT JOIN users u ON t.user_id = u.user_id
+                LEFT JOIN accounts a ON t.account_id = a.account_id
+                LEFT JOIN accounts sa ON t.source_account_id = sa.account_id
+                LEFT JOIN accounts da ON t.destination_account_id = da.account_id
                 WHERE 1=1 AND {filter_tenant}
                 """
         params = []
@@ -323,6 +466,10 @@ class TransactionModel:
             
             query += " AND payment_method = %s"
             params.append(payment_method)
+        
+        if account_id:
+            query += " AND (t.account_id = %s OR t.source_account_id = %s OR t.destination_account_id = %s)"
+            params.extend([account_id, account_id, account_id])
 
         if not include_deleted:
             query += " AND t.is_deleted = 0"
@@ -353,6 +500,9 @@ class TransactionModel:
             tx["category_name"] = row.get("category_name")
             tx["category_description"] = row.get("category_description")
             tx["owned_by_username"] = row.get("owned_by_username")
+            tx["account_name"] = row.get("account_name")
+            tx["source_account_name"] = row.get("source_account_name")
+            tx["destination_account_name"] = row.get("destination_account_name")
             transactions.append(tx)
 
         return {"success": True, "count": len(transactions), "transactions": transactions}
@@ -365,6 +515,18 @@ class TransactionModel:
         recursive=True → also delete all children recursively
         """
         tx = self.get_transaction(transaction_id, include_deleted=True)
+        # ✨ NEW: Reverse balance changes when deleting
+        
+        try:
+            self.balance_service.reverse_transaction_change(
+                transaction_id=transaction_id,
+                transaction_data=tx
+            )
+        except Exception as e:
+            raise TransactionValidationError(
+                f"Failed to reverse balance on delete: {str(e)}"
+            )
+        
         self._audit_log(
                 target_id=transaction_id,
                 action="DELETE",
@@ -382,6 +544,15 @@ class TransactionModel:
         if recursive:
             children = self._get_children_recursive(transaction_id, include_deleted=True)
             for child in children:
+                # Reverse balance for children too
+                try:
+                    child_data = self.get_transaction(child.transaction_id, include_deleted=True)
+                    self.balance_service.reverse_transaction_change(
+                        transaction_id=child.transaction_id,
+                        transaction_data=child_data
+                    )
+                except:
+                    pass 
                 if soft:
                     self._execute("UPDATE transactions SET is_deleted= 1 WHERE transaction_id = %s", (child.transaction_id,))
                 else:
@@ -397,6 +568,21 @@ class TransactionModel:
         tx = self.get_transaction(transaction_id, include_deleted=True)
         if not tx:
             raise TransactionNotFoundError(f"Transaction {transaction_id} not found.")
+        
+        try:
+                self.balance_service.apply_transaction_change(
+                    transaction_id=transaction_id,
+                    transaction_type=tx["transaction_type"],
+                    amount=float(tx["amount"]),
+                    account_id=tx.get("account_id"),
+                    source_account_id=tx.get("source_account_id"),
+                    destination_account_id=tx.get("destination_account_id"),
+                    allow_overdraft=True  # Allow overdraft on restore
+                )
+        except Exception as e:
+            raise TransactionValidationError(
+                f"Failed to reapply balance on restore: {str(e)}"
+            )
         self._audit_log(
                 target_id=transaction_id,
                 action="UPDATE",
@@ -410,6 +596,16 @@ class TransactionModel:
         if recursive:
             children = self._get_children_recursive(transaction_id, include_deleted=True)
             for child in children:
+                child_data = self.get_transaction(child.transaction_id, include_deleted=True)
+                self.balance_service.apply_transaction_change(
+                    transaction_id=child.transaction_id,
+                    transaction_type=child_data["transaction_type"],
+                    amount=float(child_data["amount"]),
+                    account_id=child_data.get("account_id"),
+                    source_account_id=child_data.get("source_account_id"),
+                    destination_account_id=child_data.get("destination_account_id"),
+                    allow_overdraft=True
+                )
                 self._execute("UPDATE transactions SET is_deleted = 0 WHERE transaction_id = %s", (child.transaction_id,))
 
 

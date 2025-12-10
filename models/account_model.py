@@ -60,11 +60,13 @@ class AccountModel:
                 cursor.execute(sql, params)
                 if fetchone:
                     result = cursor.fetchone()
-                    self.conn.commit()
+                    if not sql.strip().upper().startswith("SELECT"):
+                        self.conn.commit()
                     return result
                 if fetchall:
                     result = cursor.fetchall()
-                    self.conn.commit()
+                    if not sql.strip().upper().startswith("SELECT"):
+                        self.conn.commit()
                     return result
                 else:
                     if sql.strip().upper().startswith("UPDATE"):

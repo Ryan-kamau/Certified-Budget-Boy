@@ -154,7 +154,7 @@ def main():
                 print(f"Opening Balance: {result['opening_balance']}")
                 print(f"Description: {result.get('description', 'N/A')}")
                 print(f"Owner: {result.get('owned_by_username', 'N/A')}")
-                print(f"Active: {'Yes' if result['active'] else 'No'}")
+                print(f"Active: {'Yes' if result['is_active'] else 'No'}")
                 print(f"Deleted: {'Yes' if result['is_deleted'] else 'No'}")
                 print(f"Created: {result['created_at']}")
 
