@@ -670,5 +670,5 @@ class TransactionModel:
 
         # Final ordering
         q += " ORDER BY a.timestamp DESC"
-        print(params)
+        
         return self._execute(q, tuple(params), fetch=True)

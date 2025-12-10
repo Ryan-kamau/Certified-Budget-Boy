@@ -8,7 +8,6 @@ import json
 
 # Import your existing models
 from models.account_model import AccountModel, AccountNotFoundError, AccountValidationError
-from models.transactions_model import TransactionModel 
 
 
 # ==========================
@@ -52,7 +51,6 @@ class BalanceService:
     
     Dependencies:
     - AccountModel (for account operations)
-    - TransactionModel (for transaction queries)
     - Database connection
     """
     
@@ -64,7 +62,6 @@ class BalanceService:
         
         # Dependencies
         self.account_model = AccountModel(conn, current_user)
-        self.transaction_model = TransactionModel(conn, current_user)
 
     # ================================================================
     # INTERNAL HELPERS

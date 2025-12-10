@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 import mysql.connector
 
 # Import from your other modules
-from models.transactions_model import TransactionModel
 from features.recurring import RecurringModel, RecurringError, RecurringNotFoundError, RecurringValidationError
 
 class SchedulerError(Exception): 
@@ -38,7 +37,6 @@ class Scheduler:
         self.role = current_user.get("role")
 
         # Dependencies: delegate to specialized modules
-        self.tx = TransactionModel(conn, current_user)
         self.recurring = RecurringModel(conn, current_user)
 
 # ===================================================================
