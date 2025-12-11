@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta, date
+from models.transactions_model import TransactionModel
 import mysql.connector
 import json
 
@@ -49,6 +50,9 @@ class RecurringTransaction:
     notes: Optional[str] = None
     is_active: int = 1
     is_deleted: int = 0
+    account_id: Optional[int] = None  
+    source_account_id: Optional[int] = None 
+    destination_account_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -65,6 +69,7 @@ class RecurringModel:
     def __init__(self, db_conn, current_user: Dict[str, Any]):
         self.conn = db_conn
         self.user = current_user  # { user_id, role }
+        self.transaction_model = TransactionModel(db_conn, current_user)
 
     # ================================================================
     # Internal Helpers
@@ -139,38 +144,66 @@ class RecurringModel:
         return RecurringTransaction(**row)
     
     #Internal mini-transaction abstraction
-    def _mini_post_transaction(self, owner_id: int, title:str, amount: float, category_id: int, trans_type: str,
-                               payment_method: str, description: Optional[str], tx_date: Optional[datetime] = None) -> int:
+    def _validate_recurring_accounts(self, data: Dict[str, Any]):
         """
-        Encapsulated insert into transactions table for recurring runs.
-        Keeps recurring module independent of transactions.py while centralizing the INSERT logic.
-
-        NOTE: Uses the same minimal column set used in your earlier example.
-        If your `transactions` table includes different required columns, adapt here.
+        Validate that account fields are correctly provided based on transaction type.
+        
+        Rules:
+        - income/expense: requires account_id
+        - transfer: requires source_account_id and destination_account_id
         """
-        if tx_date is None:
-            # Use current timestamp as transaction_date
-            tx_date = datetime.now()
-
-        tx_sql = """
-            INSERT INTO transactions
-            (user_id, title, amount, category_id, transaction_type, payment_method, description, transaction_date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        trans_type = data.get("transaction_type")
+        
+        if trans_type in ["income", "expense", "debt"]:
+            if not data.get("account_id"):
+                raise RecurringValidationError(
+                    f"{trans_type} recurring transaction requires 'account_id'"
+                )
+        
+        elif trans_type == "transfer":
+            if not data.get("source_account_id"):
+                raise RecurringValidationError(
+                    "transfer recurring transaction requires 'source_account_id'"
+                )
+            if not data.get("destination_account_id"):
+                raise RecurringValidationError(
+                    "transfer recurring transaction requires 'destination_account_id'"
+                )
+            if data.get("source_account_id") == data.get("destination_account_id"):
+                raise RecurringValidationError(
+                    "Cannot transfer to the same account"
+                )
+            
+    def _create_transaction(self, recurring: RecurringTransaction, amount: float) -> int:
         """
-        tx_params = (
-            owner_id,
-            title,
-            amount,
-            category_id,
-            trans_type,
-            payment_method,
-            description,
-            tx_date
-        )
-        new_tx_id = self._execute(tx_sql, tx_params)
-        self._audit_log(new_tx_id, "transactions", "INSERT", user_id=owner_id, 
-                        amount=amount, category_id=category_id, payment_method=payment_method)
-        return new_tx_id
+        Create a transaction using TransactionModel.
+        This ensures balance updates and all business logic is applied.
+        """
+        if not self.transaction_model:
+            raise RecurringDatabaseError(
+                "TransactionModel not available. Cannot create transaction."
+            )
+        
+        # Build transaction data from recurring
+        tx_data = {
+            "title": recurring.name,
+            "description": recurring.notes or f"Auto-generated from recurring: {recurring.name}",
+            "amount": amount,
+            "category_id": recurring.category_id,
+            "transaction_type": recurring.transaction_type,
+            "payment_method": recurring.payment_method,
+            "transaction_date": date.today(),
+            "is_global": recurring.is_global,
+            "account_id": recurring.account_id,
+            "source_account_id": recurring.source_account_id,
+            "destination_account_id": recurring.destination_account_id,
+        }
+        
+        # Create transaction using TransactionModel
+        # This automatically handles balance updates via BalanceService
+        result = self.transaction_model.create_transaction(**tx_data)
+        
+        return result["transaction_id"]
 
     def _record_history(self,
                         owner_id: int,
@@ -217,11 +250,16 @@ class RecurringModel:
         if missing:
             raise RecurringValidationError(f"Missing required fields: {missing}")
         
+        # ✨ NEW: Validate account fields
+        self._validate_recurring_accounts(data)
+        
+        # Include account fields in INSERT
         sql = """
             INSERT INTO recurring_transactions
             (owner_id, is_global, name, description, frequency, interval_value,
-             next_due, amount, category_id, transaction_type, payment_method, notes)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             next_due, amount, category_id, transaction_type, payment_method, notes,
+             account_id, source_account_id, destination_account_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """
 
         params = (
@@ -237,7 +275,11 @@ class RecurringModel:
             data["transaction_type"],
             data.get("payment_method", "mobile_money"),
             data.get("notes"),
+            data.get("account_id"),
+            data.get("source_account_id"),
+            data.get("destination_account_id"),
         )
+
 
         new_id = self._execute(sql, params)
         new_details = self.get_recurring(new_id)
@@ -248,10 +290,18 @@ class RecurringModel:
     def get_recurring(self, recurring_id: int, * , include_deleted: bool = False, global_view: bool = False) -> Dict[str, Any]:
         filter_tenant = f"r.{self._tenant_filter(global_view)}"
         sql = f"""
-            SELECT r.*, u1.username AS owned_by_username, c.name AS category_name
+            SELECT r.*, 
+                   u1.username AS owned_by_username, 
+                   c.name AS category_name,
+                   a.name AS account_name,
+                   sa.name AS source_account_name,
+                   da.name AS destination_account_name
             FROM recurring_transactions r
             LEFT JOIN users u1 ON r.owner_id = u1.user_id
             LEFT JOIN categories c ON r.category_id = c.category_id
+            LEFT JOIN accounts a ON r.account_id = a.account_id
+            LEFT JOIN accounts sa ON r.source_account_id = sa.account_id
+            LEFT JOIN accounts da ON r.destination_account_id = da.account_id
             WHERE r.recurring_id = %s AND {filter_tenant}
         """
         params = [recurring_id]
@@ -272,15 +322,26 @@ class RecurringModel:
         result = self._build_recurring(clean_row).to_dict()
         result["category_name"] = row["category_name"]
         result["owned_by_username"] = row["owned_by_username"]
+        result["account_name"] = row.get("account_name")
+        result["source_account_name"] = row.get("source_account_name")
+        result["destination_account_name"] = row.get("destination_account_name")
         return result
     
     def list(self,frequency: str, trans_type: str,*, include_deleted: bool = False, global_view: bool = False) -> List[Dict[str, Any]]:
         filter_tenant = f"r.{self._tenant_filter(global_view)}"
         sql = f"""
-            SELECT r.*,  u1.username AS owned_by_username, c.name AS category_name
+            SELECT r.*,  
+                   u1.username AS owned_by_username, 
+                   c.name AS category_name,
+                   a.name AS account_name,
+                   sa.name AS source_account_name,
+                   da.name AS destination_account_name
             FROM recurring_transactions r
             LEFT JOIN users u1 ON r.owner_id = u1.user_id
             LEFT JOIN categories c ON r.category_id = c.category_id
+            LEFT JOIN accounts a ON r.account_id = a.account_id
+            LEFT JOIN accounts sa ON r.source_account_id = sa.account_id
+            LEFT JOIN accounts da ON r.destination_account_id = da.account_id
             WHERE 1=1
             {"" if include_deleted else "AND r.is_deleted = 0"}
             AND {filter_tenant}
@@ -313,6 +374,9 @@ class RecurringModel:
             result = self._build_recurring(clean_row).to_dict()
             result["owned_by_username"] = r.get("owned_by_username")
             result["category_name"] = r.get("category_name")
+            result["account_name"] = r.get("account_name")
+            result["source_account_name"] = r.get("source_account_name")
+            result["destination_account_name"] = r.get("destination_account_name")
             rt.append(result)
         return rt
 
@@ -545,17 +609,7 @@ class RecurringModel:
                     amount_to_use = rec.override_amount
                     override_used = True
 
-                # Insert new normal transaction using mini abstraction
-                new_tx_id = self._mini_post_transaction(
-                    owner_id=rec.owner_id,
-                    title=rec.name,
-                    amount=amount_to_use,
-                    category_id=rec.category_id,
-                    trans_type=rec.transaction_type,
-                    payment_method=rec.payment_method,
-                    description=rec.notes,
-                    tx_date=None
-                )
+                new_tx_id = self._create_transaction(rec, amount_to_use)
                 created_ids.append(new_tx_id)
 
                 # Prepare next_due
