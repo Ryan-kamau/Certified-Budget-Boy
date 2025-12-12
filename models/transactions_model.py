@@ -135,16 +135,6 @@ class TransactionModel:
                     user_agent, is_global, timestamp)
             VALUES (%s, %s, %s, %s, %s, %s, %s,%s, %s, NOW())
             """
-        if old_values:
-            for k in ("transaction_date","created_at","updated_at"):
-                if k in old_values and isinstance(old_values[k], (date, datetime)):
-                    old_values[k] = old_values[k].isoformat()
-
-        if new_values:
-            for k in ("transaction_date","created_at","updated_at"):
-                if k in new_values and new_values[k]:
-                    new_values[k] = new_values[k].isoformat()
-
             
         params =         (
                     self.user_id,
@@ -193,13 +183,13 @@ class TransactionModel:
             query += " AND t.is_deleted = 0"
         params = (parent_id,)
         if "%s" in filter_tenant:
-            params += self.user_id
+            params += (self.user_id,)
         rows = self._execute(query, params, fetch=True)
 
         children = []
         for row in rows:
             child = self._build_transaction(row)
-            child.children = self._get_children_recursive(child.category_id, include_deleted)
+            child.children = self._get_children_recursive(child.transaction_id, include_deleted=include_deleted)
             children.append(child)
         return children
 
@@ -352,6 +342,7 @@ class TransactionModel:
         if not updates:
             raise TransactionValidationError("No fields provided for update.")
         
+        self._validate_transaction_accounts(updates)
         old_trans = self.get_transaction(transaction_id)
         # If updating amount or accounts, validate and handle balance changes
         balance_affecting_fields = ["amount", "transaction_type", "account_id", 

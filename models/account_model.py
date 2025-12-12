@@ -126,13 +126,13 @@ class AccountModel:
         return Accounts(**row)
     
     #public helper
-    def audit_logs(self, accout_id: int,
+    def audit_logs(self, account_id: int,
             action: str,
             transaction_id: int,
             old_balance: float,
             new_balance: float,
             new_values: Dict[str, Any]):
-        return self._audit_logs(account_id=accout_id, action=action, transaction_id=transaction_id,
+        return self._audit_logs(account_id=account_id, action=action, transaction_id=transaction_id,
                                 old_balance=old_balance, new_balance=new_balance, new_values=new_values)
     
     
