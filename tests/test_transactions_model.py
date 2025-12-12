@@ -15,7 +15,8 @@ def print_menu():
     print("5. Soft delete transaction")
     print("6. Hard delete transaction")
     print("7. Restore transaction")
-    print("8. Exit")
+    print("8. View audit logs for transaction")
+    print("9. Exit")
     print("=" * 50)
 
 
@@ -257,7 +258,25 @@ def main():
                 data = manager.restore_transaction(tid, recurs)
                 pprint(data)
 
+            # ---------------------------------------------------
+            # 9. VIEW AUDIT LOGS
+            # ---------------------------------------------------
             elif choice == 8:
+                print("\n📒 VIEW AUDIT LOGS")
+
+                tid = input("Enter transaction ID to view logs: ").strip()
+
+                tid = int(tid) if tid else None
+                try:
+                    logs = manager.view_audit_logs(
+                        target_id=tid
+                    )
+                    pprint(logs)
+                except Exception as e:
+                    print(f"❌ Error fetching audit logs: {e}")
+
+
+            elif choice == 9:
                 print("👋 Exiting tester. Goodbye!")
                 break
 

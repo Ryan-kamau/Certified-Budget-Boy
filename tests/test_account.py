@@ -324,7 +324,7 @@ def main():
                         if log.get('transaction_id'):
                             print(f"   Transaction ID: {log.get('transaction_id')}")
                         
-                        print(f"   Timestamp: {log.get('timestamp')}")
+                        print(f"   Timestamp: {log.get('created_at')}")
                         
                         if log.get('changed_fields'):
                             print(f"   Changed Fields: {log.get('changed_fields')}")

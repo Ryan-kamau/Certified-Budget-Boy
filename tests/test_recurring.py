@@ -32,7 +32,7 @@ def main():
     if not conn:
         print("❌ Could not establish database connection.")
         return
-    username= input("Name? ")
+    username = input("Name? ")
     password = input("Password: ")
 
     um = UserModel(conn)
@@ -69,21 +69,48 @@ def main():
                 name = input("Name: ").strip()
                 desc = input("Description (optional): ").strip() or None
                 freq = input("Frequency (daily/weekly/monthly/yearly): ").strip().lower()
+                interval_value = input("Interval value (number, default 1): ").strip() or 1
                 amount = float(input("Amount: "))
-                cat_id = input("Category ID: ")
-                trans_type = input("Type (income/expense/transfer/debts): ").strip()
+                cat_id = input("Category ID: ").strip()
+                trans_type = input("Type (income/expense/transfer/debt): ").strip().lower()
                 next_due_str = input("Next Due Date (YYYY-MM-DD): ").strip()
                 next_due = datetime.fromisoformat(next_due_str)
-                cat_id = cat_id if isinstance(cat_id, int) else None
- 
+
+                # ----------------------------
+                # Account fields depending on type
+                # ----------------------------
+                account_id = None
+                source_account_id = None
+                destination_account_id = None
+
+                if trans_type in ["income", "expense", "debt"]:
+                    account_id = input("Account ID: ").strip()
+                    account_id = int(account_id) if account_id else None
+                elif trans_type == "transfer":
+                    source_account_id = input("Source Account ID: ").strip()
+                    destination_account_id = input("Destination Account ID: ").strip()
+                    source_account_id = int(source_account_id) if source_account_id else None
+                    destination_account_id = int(destination_account_id) if destination_account_id else None
+
+                is_global = input("Make global? (Y/N): ").strip().lower() == "y"
+                payment_method = input("Payment method (cash/bank/mobile_money/credit_card/other): ").strip() or "mobile_money"
+                notes = input("Notes (optional): ").strip() or None
+
                 data = {
                     "name": name,
                     "description": desc,
                     "frequency": freq,
+                    "interval_value": int(interval_value),
                     "next_due": next_due,
                     "amount": amount,
-                    "category_id": cat_id,
+                    "category_id": int(cat_id) if cat_id else None,
                     "transaction_type": trans_type,
+                    "account_id": account_id,
+                    "source_account_id": source_account_id,
+                    "destination_account_id": destination_account_id,
+                    "is_global": is_global,
+                    "payment_method": payment_method,
+                    "notes": notes,
                 }
 
                 result = manager.create(**data)
@@ -126,79 +153,52 @@ def main():
             # ----------------------------
             elif choice == 4:
                 rid = int(input("Recurring ID: "))
-                updates = {}
-
                 print("Leave blank to skip editing any field.")
 
-                # BASIC TEXT FIELDS
+                updates = {}
                 name = input("New name: ").strip() or None
                 description = input("New description: ").strip() or None
-
-                # FREQUENCY + INTERVAL
                 frequency = input("New frequency (daily/weekly/monthly/yearly): ").strip() or None
                 interval_value = input("New interval value (number): ").strip() or None
-
-                # AMOUNT FIELDS
                 amount = input("New base amount: ").strip() or None
                 override_amount = input("Override amount (leave blank to remove): ").strip() or None
-
-
-                # TYPE + PAYMENT
-                transaction_type = input("New type (income/expense/debt/transfer/other): ").strip() or None
+                transaction_type = input("New type (income/expense/debt/transfer): ").strip() or None
                 payment_method = input("New payment method (cash/bank/mobile_money/credit_card/other): ").strip() or None
-
-                # DATE FIELDS
                 next_due = input("New next_due (YYYY-MM-DD): ").strip() or None
                 pause_until = input("Pause until (YYYY-MM-DD): ").strip() or None
-
-                # BOOLS
                 skip_next = input("Skip next run? (Y/N): ").strip().lower() == "y"
                 is_global = input("Make global? (Y/N): ").strip().lower() == "y"
                 is_active = input("Activate? (Y/N): ").strip().lower() == "y"
-
-                # OPTIONAL MISC
                 max_missed_runs = input("Max missed runs: ").strip() or None
                 notes = input("Notes: ").strip() or None
 
-                # BUILD UPDATE DICT
-                updates = {}
+                # Account fields
+                account_id = input("New Account ID: ").strip() or None
+                source_account_id = input("New Source Account ID: ").strip() or None
+                destination_account_id = input("New Destination Account ID: ").strip() or None
 
                 if name: updates["name"] = name
                 if description: updates["description"] = description
                 if frequency: updates["frequency"] = frequency
                 if interval_value: updates["interval_value"] = int(interval_value)
                 if amount: updates["amount"] = float(amount)
-
-                # override_amount can be None explicitly
                 if override_amount == "":
                     updates["override_amount"] = None
                 elif override_amount:
                     updates["override_amount"] = float(override_amount)
+                if transaction_type: updates["transaction_type"] = transaction_type
+                if payment_method: updates["payment_method"] = payment_method
+                if next_due: updates["next_due"] = datetime.fromisoformat(next_due)
+                if pause_until: updates["pause_until"] = datetime.fromisoformat(pause_until)
+                if max_missed_runs: updates["max_missed_runs"] = int(max_missed_runs)
+                if notes: updates["notes"] = notes
 
-
-                if transaction_type:
-                    updates["transaction_type"] = transaction_type
-
-                if payment_method:
-                    updates["payment_method"] = payment_method
-
-                if next_due:
-                    updates["next_due"] = datetime.fromisoformat(next_due)
-
-                if pause_until:
-                    updates["pause_until"] = datetime.fromisoformat(pause_until)
-
-                if max_missed_runs:
-                    updates["max_missed_runs"] = int(max_missed_runs)
-
-                if notes:
-                    updates["notes"] = notes
-
-                # boolean flags
                 updates["skip_next"] = skip_next
                 updates["is_global"] = is_global
                 updates["is_active"] = is_active
-
+                if account_id: updates["account_id"] = int(account_id)
+                if source_account_id: updates["source_account_id"] = int(source_account_id)
+                if destination_account_id: updates["destination_account_id"] = int(destination_account_id)
 
                 result = manager.update(rid, **updates)
                 pprint(result)
@@ -231,15 +231,15 @@ def main():
             # 8. RUN NOW
             # ----------------------------
             elif choice == 8:
-                data = manager.run_due()  # You have run logic in recurring.py
+                data = manager.run_due()
                 pprint(data)
 
             # ----------------------------
             # 9. PREVIEW NEXT RUN
             # ----------------------------
             elif choice == 9:
-                rid = input("Recurring ID: ")
-                rid = int(rid) if rid else None      
+                rid = input("Recurring ID: ").strip()
+                rid = int(rid) if rid else None
                 data = manager.preview_next_run(rid)
                 pprint(data)
 
@@ -259,7 +259,6 @@ def main():
 
                 pprint(data)
 
-
             # ----------------------------
             # EXIT
             # ----------------------------
@@ -275,6 +274,7 @@ def main():
 
     conn.close()
     print("🔒 Connection closed.")
+
 
 if __name__ == "__main__":
     main()
