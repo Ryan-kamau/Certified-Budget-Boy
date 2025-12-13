@@ -320,6 +320,10 @@ def main():
                         if log.get('old_balance') is not None or log.get('new_balance') is not None:
                             print(f"   Old Balance: {log.get('old_balance')}")
                             print(f"   New Balance: {log.get('new_balance')}")
+
+                        if log.get('old_values') is not None or log.get('new_values') is not None:
+                            print(f"   Old Data: {log.get('old_data')}")
+                            print(f"   New Values: {log.get('new_data')}")
                         
                         if log.get('transaction_id'):
                             print(f"   Transaction ID: {log.get('transaction_id')}")

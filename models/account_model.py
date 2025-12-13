@@ -202,6 +202,7 @@ class AccountModel:
             raise AccountValidationError("No fields provided for update.")
         
         dex = self.get_account(account_id)
+        old_bal = dex["balance"]
         
         fields = ", ".join((f"{k}=%s" for k in updates.keys()))
         params = tuple(updates.values()) + (account_id, self.user["user_id"],)
@@ -209,12 +210,13 @@ class AccountModel:
         result = self._execute(
             f"UPDATE accounts SET {fields} WHERE account_id = %s AND owner_id = %s", params
         )
-        print(result)
         if result == 0:
             raise AccountNotFoundError(f"Account {account_id} not found or unchanged.")
-        
-        self._audit_logs(account_id, action= "update", old_values=dex, new_values= updates, changed_fields= list(updates.keys()))
         updated = self.get_account(account_id)
+        new_bal = updated["balance"]
+        
+        self._audit_logs(account_id, action= "update", old_balance=old_bal, new_balance=new_bal, 
+                         old_values=dex, new_values= updates, changed_fields= list(updates.keys()))
         return {"success": True, "message": "Account updated successfully.", "update": updated}
     
     def list_account(

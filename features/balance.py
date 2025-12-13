@@ -433,7 +433,7 @@ class BalanceService:
         opening_balance = float(account.get("opening_balance", 0))
         
         # Query all transactions for this account
-        # TODO: Update based on your TransactionModel's query method
+        # TODO:  based on your TransactionModel's query method
         sql = """
             SELECT transaction_id, transaction_type, amount, account_id,
                    source_account_id, destination_account_id
