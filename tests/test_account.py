@@ -311,7 +311,7 @@ def main():
                 print("-" * 60)
                 
                 if result:
-                    for i, log in enumerate(result[:20], 1):  # Show first 20
+                    for i, log in enumerate(result, 1): 
                         print(f"\n{i}. Log ID: {log.get('log_id')}")
                         print(f"   Account ID: {log.get('account_id')}")
                         print(f"   Action: {log.get('action')}")
@@ -321,7 +321,7 @@ def main():
                             print(f"   Old Balance: {log.get('old_balance')}")
                             print(f"   New Balance: {log.get('new_balance')}")
 
-                        if log.get('old_values') is not None or log.get('new_values') is not None:
+                        if log.get('old_data') is not None or log.get('new_data') is not None:
                             print(f"   Old Data: {log.get('old_data')}")
                             print(f"   New Values: {log.get('new_data')}")
                         
@@ -335,8 +335,6 @@ def main():
                         
                         print("   " + "-" * 50)
                     
-                    if len(result) > 20:
-                        print(f"\n  ... and {len(result) - 20} more entries")
                 else:
                     print("  (no logs found)")
 
@@ -375,10 +373,10 @@ def main():
                         if log.get('changed_fields'):
                             print(f"   Changed Fields: {log.get('changed_fields')}")
                         
-                        if log.get('old_values'):
+                        if log.get('old_data'):
                             print(f"   Old Values: {log.get('old_values')}")
                         
-                        if log.get('new_values'):
+                        if log.get('new_data'):
                             print(f"   New Values: {log.get('new_values')}")
                         
                         print("   " + "-" * 50)

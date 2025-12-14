@@ -357,7 +357,7 @@ class BalanceService:
     
     def get_account_balance(self, account_id: int) -> Dict[str, Any]:
         """Get current balance for a specific account"""
-        account = self.account_model.get_account(account_id)
+        account = self.account_model.get_account(account_id, global_view=False)
         
         return {
             "account_id": account_id,
@@ -369,11 +369,11 @@ class BalanceService:
             "owner": account.get("owned_by_username")
         }
     
-    def get_all_balances(self, include_deleted: bool = False) -> List[Dict[str, Any]]:
+    def get_all_balances(self,*, include_deleted: bool = False, global_view: bool = False) -> List[Dict[str, Any]]:
         """Get balances for all user's accounts"""
         accounts_result = self.account_model.list_account(
             include_deleted=include_deleted,
-            global_view=False
+            global_view=global_view
         )
         
         balances = []
