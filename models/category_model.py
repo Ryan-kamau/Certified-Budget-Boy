@@ -436,6 +436,33 @@ class CategoryModel:
         return self._execute(q, tuple(params), fetch=True)
 
 
+    def assert_category_access(
+        self,
+        category_id: int
+    ) -> None:
+        """
+        Ensures the current user is allowed to reference this category.
+        """
+        params = [category_id]
+
+        params.append(self.user_id)
+
+        query = f"""
+            SELECT 1
+            FROM categories c
+            WHERE c.category_id = %s 
+                AND c.owner_id = %s
+                AND c.is_deleted = 0
+            LIMIT 1
+        """
+
+        rows = self._execute(query, tuple(params), fetch=True)
+
+        if not rows:
+            raise CategoryError(
+                f"Category {category_id} is not accessible to user {self.current_user["username"]}"
+            )
+        
     def delete_category(self, category_id: int, soft: bool = True, recursive: bool = False) -> int:
         """Soft or hard delete a category (optionally recursive) with tenant restrictions."""
         # Enforce ownership

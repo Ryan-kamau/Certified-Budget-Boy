@@ -4,6 +4,8 @@ from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta, date
 from models.transactions_model import TransactionModel
+from models.category_model import CategoryModel
+from models.account_model import AccountModel
 import mysql.connector
 import json
 
@@ -44,7 +46,7 @@ class RecurringTransaction:
     skip_next: int = 0
     override_amount: Optional[float] = None
     amount: float = 0.0
-    category_id: int = 0
+    category_id: int = None
     transaction_type: str = "expense"
     payment_method: str = "mobile_money"
     notes: Optional[str] = None
@@ -70,6 +72,8 @@ class RecurringModel:
         self.conn = db_conn
         self.user = current_user  # { user_id, role }
         self.transaction_model = TransactionModel(db_conn, current_user)
+        self.cat_man = CategoryModel(db_conn, current_user)
+        self.accounts = AccountModel(db_conn, current_user)
 
     # ================================================================
     # Internal Helpers
@@ -118,7 +122,7 @@ class RecurringModel:
             else:
                 raise RecurringValidationError("Users can only view and control own data")
             
-    def _audit_log(self, target_id: int, target_table: str, action: str, **new_values: Dict[str, Any]):
+    def _audit_log(self, target_id: int, action: str, **new_values: Dict[str, Any]):
         """Simple JSON audit logger ."""
         sql = """
                 INSERT INTO audit_log
@@ -132,7 +136,7 @@ class RecurringModel:
                 if k in new_values and new_values[k]:
                     new_values[k] = new_values[k].isoformat()
 
-        params = (self.user.get("user_id"), target_table, target_id, action,
+        params = (self.user.get("user_id"), "recurring_transactions", target_id, action,
                   json.dumps(new_values or {}, default=str))
         affected = self._execute(sql, params)
 
@@ -161,18 +165,22 @@ class RecurringModel:
                 )
         
         elif trans_type == "transfer":
-            if not data.get("source_account_id"):
+            source_acc = data.get("source_account_id")
+            dest_acc = data.get("destination_account_id")
+            if not source_acc:
                 raise RecurringValidationError(
                     "transfer recurring transaction requires 'source_account_id'"
                 )
-            if not data.get("destination_account_id"):
+            if not dest_acc:
                 raise RecurringValidationError(
                     "transfer recurring transaction requires 'destination_account_id'"
                 )
-            if data.get("source_account_id") == data.get("destination_account_id"):
+            if source_acc == dest_acc:
                 raise RecurringValidationError(
                     "Cannot transfer to the same account"
                 )
+            self.accounts.assert_account_access(account_id=source_acc)
+            self.accounts.assert_account_access(account_id=dest_acc)
             
     def _create_transaction(self, recurring: RecurringTransaction, amount: float) -> int:
         """
@@ -204,6 +212,13 @@ class RecurringModel:
         result = self.transaction_model.create_transaction(**tx_data)
         
         return result["transaction_id"]
+    
+    def _assert_ownership(self, account_id: Optional[int] = None, category_id: Optional[int] =None ):
+        """Validate category and account selected belongs to the user"""
+        if account_id:
+            self.accounts.assert_account_access(account_id=account_id)
+        if category_id:
+            self.cat_man.assert_category_access(category_id)
 
     def _record_history(self,
                         owner_id: int,
@@ -250,9 +265,10 @@ class RecurringModel:
         if missing:
             raise RecurringValidationError(f"Missing required fields: {missing}")
         
-        # ✨ NEW: Validate account fields
+        # Validate account and category fields
         self._validate_recurring_accounts(data)
-        
+        self._assert_ownership(data.get("account_id"), category_id=data.get("category_id"))
+
         # Include account fields in INSERT
         sql = """
             INSERT INTO recurring_transactions
@@ -271,7 +287,7 @@ class RecurringModel:
             data.get("interval_value", 1),
             data["next_due"],
             data["amount"],
-            data["category_id"],
+            data.get("category_id"),
             data["transaction_type"],
             data.get("payment_method", "mobile_money"),
             data.get("notes"),
@@ -383,7 +399,7 @@ class RecurringModel:
     def update(self, recurring_id: int, **updates: Dict[str, Any]) -> Dict[str, Any]:
         if not updates:
             raise RecurringValidationError("No update fields provided.")
-
+        self._assert_ownership(updates.get("account_id"), category_id=updates.get("category_id"))
         set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
         params = list(updates.values())
 

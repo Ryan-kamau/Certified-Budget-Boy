@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict, field
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import date, datetime
+from models.category_model import CategoryModel
 from features.balance import BalanceService
+from models.account_model import AccountModel
 import mysql.connector
 import json
 
@@ -70,6 +72,8 @@ class TransactionModel:
         self.user_id = self.current_user.get("user_id")
         self.role = self.current_user.get("role")
         self.balance_service = BalanceService(connection, current_user)
+        self.category_mod = CategoryModel(connection, current_user)
+        self.accounts = AccountModel(connection, current_user)
 
     # ------------
     # Internal Helpers
@@ -192,6 +196,13 @@ class TransactionModel:
             child.children = self._get_children_recursive(child.transaction_id, include_deleted=include_deleted)
             children.append(child)
         return children
+    
+    def _assert_ownership(self, account_id: Optional[int] = None, category_id: Optional[int] =None ):
+        """Validate category and account selected belongs to the user"""
+        if account_id is not None:
+            self.accounts.assert_account_access(account_id=account_id)
+        if category_id  is not None:
+            self.category_mod.assert_category_access(category_id)
 
     def _validate_transaction_accounts(self, tx_data: Dict[str, Any]):
         """
@@ -210,18 +221,22 @@ class TransactionModel:
                 )
         
         elif trans_type == "transfer":
-            if not tx_data.get("source_account_id"):
+            source_acc = tx_data.get("source_account_id")
+            dest_acc = tx_data.get("destination_account_id")
+            if not source_acc:
                 raise TransactionValidationError(
-                    "transfer transaction requires 'source_account_id'"
+                    "transfer recurring transaction requires 'source_account_id'"
                 )
-            if not tx_data.get("destination_account_id"):
+            if not dest_acc:
                 raise TransactionValidationError(
-                    "transfer transaction requires 'destination_account_id'"
+                    "transfer recurring transaction requires 'destination_account_id'"
                 )
-            if tx_data.get("source_account_id") == tx_data.get("destination_account_id"):
+            if source_acc == dest_acc:
                 raise TransactionValidationError(
                     "Cannot transfer to the same account"
                 )
+            self.accounts.assert_account_access(account_id=source_acc)
+            self.accounts.assert_account_access(account_id=dest_acc)
     
     # ------------
     # Public CRUD API
@@ -237,15 +252,48 @@ class TransactionModel:
         
         current_user_id = self.user_id
         query = """
-            INSERT INTO transactions 
-            (user_id, category_id, parent_transaction_id, title, description, amount, 
-             transaction_type, payment_method, transaction_date, is_global,
-             account_id, source_account_id, destination_account_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO transactions (
+                user_id, category_id, parent_transaction_id, title, description, amount, transaction_type, payment_method,
+                transaction_date, is_global, account_id, source_account_id, destination_account_id
+            )
+            SELECT
+                %s AS user_id, c.category_id, %s AS parent_transaction_id, %s AS title, %s AS description,
+                %s AS amount, %s AS transaction_type, %s AS payment_method, %s AS transaction_date, %s AS is_global,
+                a.account_id,
+                src.account_id,
+                dst.account_id
+            FROM accounts a
+            LEFT JOIN categories c
+                ON c.category_id = %s
+                AND c.owner_id = %s
+                AND c.is_deleted = 0
+            LEFT JOIN accounts src
+                ON src.account_id = %s
+                AND src.owner_id = %s
+                AND src.is_deleted = 0
+            LEFT JOIN accounts dst
+                ON dst.account_id = %s
+                AND dst.owner_id = %s
+                AND dst.is_deleted = 0
+            WHERE
+                (
+                    -- income / expense
+                    (%s IN ('income','expense')
+                    AND a.account_id = %s
+                    AND a.owner_id = %s
+                    AND a.is_deleted = 0)
+                OR
+                    -- transfer
+                    (%s = 'transfer'
+                    AND src.account_id IS NOT NULL
+                    AND dst.account_id IS NOT NULL
+                    AND src.account_id <> dst.account_id)
+                )
+            LIMIT 1;
+
         """
         params = (
             current_user_id,
-            tx_data.get("category_id"),
             tx_data.get("parent_transaction_id"),
             tx_data["title"],
             tx_data.get("description"),
@@ -254,13 +302,27 @@ class TransactionModel:
             tx_data.get("payment_method", "mobile_money"),
             tx_data["transaction_date"],
             tx_data.get("is_global", 0),
-            tx_data.get("account_id"),
+            # category
+            tx_data.get("category_id"),
+            current_user_id,
+            # transfer accounts
             tx_data.get("source_account_id"),
+            current_user_id,
             tx_data.get("destination_account_id"),
-        )
+            current_user_id,
+
+            # WHERE logic
+            tx_data["transaction_type"],
+            tx_data.get("account_id"),
+            current_user_id,
+            tx_data["transaction_type"],
+            )
 
         new_id = self._execute(query, params)
-        # ✨ NEW: Apply balance changes automatically
+        if new_id == 0:
+            raise TransactionError("Ownership validation failed.... Invalid Account or Category selected")
+
+        # Apply balance changes automatically
         try:
             self.balance_service.apply_transaction_change(
                 transaction_id=new_id,
@@ -343,6 +405,8 @@ class TransactionModel:
             raise TransactionValidationError("No fields provided for update.")
         
         self._validate_transaction_accounts(updates)
+        self._assert_ownership(updates.get("account_id"), category_id=updates.get("category_id"))
+
         old_trans = self.get_transaction(transaction_id)
         # If updating amount or accounts, validate and handle balance changes
         balance_affecting_fields = ["amount", "transaction_type", "account_id", 

@@ -349,3 +349,31 @@ class AccountModel:
             params.append(self.user["user_id"])
 
         return self._execute(q, tuple(params), fetchall=True)
+    
+    def assert_account_access(
+        self,
+        account_id: int
+    ) -> None:
+        """
+        Ensures the current user is allowed to reference this account.
+        """
+        params = [account_id]
+
+        params.append(self.user["user_id"])
+
+        query = f"""
+            SELECT 1
+            FROM accounts a
+            WHERE a.account_id = %s
+                AND a.owner_id = %s
+                AND a.is_active = 1
+                AND a.is_deleted = 0
+            LIMIT 1
+        """
+
+        rows = self._execute(query, tuple(params), fetchone=True)
+
+        if not rows:
+            raise AccountDataBaseError(
+                f"Account {account_id} is not accessible to user {self.user["username"]}"
+            )
