@@ -249,78 +249,116 @@ class TransactionModel:
             raise TransactionValidationError(f"Missing required fields: {missing}")
         
         self._validate_transaction_accounts(tx_data)
-        
+        self._assert_ownership(tx_data)
         current_user_id = self.user_id
         query = """
                 INSERT INTO transactions (
-                user_id, category_id, parent_transaction_id, title, description, amount, transaction_type, payment_method,
-                transaction_date, is_global, account_id, source_account_id, destination_account_id
-            )
-            SELECT
-                %s AS user_id, c.category_id, %s AS parent_transaction_id, %s AS title, %s AS description,
-                %s AS amount, %s AS transaction_type, %s AS payment_method, %s AS transaction_date, %s AS is_global,
-                a.account_id,
-                src.account_id,
-                dst.account_id
-            FROM accounts a
-            LEFT JOIN categories c
-                ON c.category_id = %s
-                AND c.owner_id = %s
-                AND c.is_deleted = 0
-            LEFT JOIN accounts src
-                ON src.account_id = %s
-                AND src.owner_id = %s
-                AND src.is_deleted = 0
-            LEFT JOIN accounts dst
-                ON dst.account_id = %s
-                AND dst.owner_id = %s
-                AND dst.is_deleted = 0
-            WHERE
-                (
-                    -- income / expense
-                    (%s IN ('income','expense')
-                    AND a.account_id = %s
-                    AND a.owner_id = %s
-                    AND a.is_deleted = 0)
-                OR
-                    -- transfer
-                    (%s = 'transfer'
-                    AND src.account_id IS NOT NULL
-                    AND dst.account_id IS NOT NULL
-                    AND src.account_id <> dst.account_id)
+            user_id,
+            category_id,
+            parent_transaction_id,
+            title,
+            description,
+            amount,
+            transaction_type,
+            payment_method,
+            transaction_date,
+            is_global,
+            account_id,
+            source_account_id,
+            destination_account_id
+        )
+        SELECT
+            %s AS user_id,
+            c.category_id,
+            ptx.transaction_id AS parent_transaction_id,
+            %s AS title,
+            %s AS description,
+            %s AS amount,
+            %s AS transaction_type,
+            %s AS payment_method,
+            %s AS transaction_date,
+            %s AS is_global,
+            a.account_id,
+            src.account_id,
+            dst.account_id
+        FROM accounts a
+        LEFT JOIN categories c
+            ON c.category_id = %s
+            AND c.owner_id = %s
+            AND c.is_deleted = 0
+        LEFT JOIN transactions ptx
+            ON ptx.transaction_id = %s
+            AND ptx.user_id = %s
+        LEFT JOIN accounts src
+            ON src.account_id = %s
+            AND src.owner_id = %s
+            AND src.is_deleted = 0
+        LEFT JOIN accounts dst
+            ON dst.account_id = %s
+            AND dst.owner_id = %s
+            AND dst.is_deleted = 0
+        WHERE
+            (
+                -- income / expense
+                (%s IN ('income','expense')
+                AND a.account_id = %s
+                AND a.owner_id = %s
+                AND a.is_deleted = 0
+                AND (%s IS NULL OR c.category_id IS NOT NULL)
+                AND (%s IS NULL OR ptx.transaction_id IS NOT NULL)
                 )
-            LIMIT 1;
-
+            OR
+                -- transfer
+                (%s = 'transfer'
+                AND src.account_id IS NOT NULL
+                AND dst.account_id IS NOT NULL
+                AND src.account_id <> dst.account_id
+                AND (%s IS NULL OR ptx.transaction_id IS NOT NULL)
+                )
+            )
+        LIMIT 1;
         """
         params = (
-            current_user_id,
-            tx_data.get("parent_transaction_id"),
-            tx_data["title"],
-            tx_data.get("description"),
-            tx_data["amount"],
-            tx_data["transaction_type"],
-            tx_data.get("payment_method", "mobile_money"),
-            tx_data["transaction_date"],
-            tx_data.get("is_global", 0),
-            # category
-            tx_data.get("category_id"),
-            current_user_id,
-            # transfer accounts
-            tx_data.get("source_account_id"),
-            current_user_id,
-            tx_data.get("destination_account_id"),
-            current_user_id,
+                # SELECT
+                current_user_id,
+                tx_data["title"],
+                tx_data.get("description"),
+                tx_data["amount"],
+                tx_data["transaction_type"],
+                tx_data.get("payment_method", "mobile_money"),
+                tx_data["transaction_date"],
+                tx_data.get("is_global", 0),
 
-            # WHERE logic
-            tx_data["transaction_type"],
-            tx_data.get("account_id"),
-            current_user_id,
-            tx_data["transaction_type"],
+                # category join
+                tx_data.get("category_id"),
+                current_user_id,
+
+                # parent transaction join
+                tx_data.get("parent_transaction_id"),
+                current_user_id,
+
+                # transfer joins
+                tx_data.get("source_account_id"),
+                current_user_id,
+                tx_data.get("destination_account_id"),
+                current_user_id,
+
+                # WHERE (income/expense)
+                tx_data["transaction_type"],
+                tx_data.get("account_id"),
+                current_user_id,
+                tx_data.get("category_id"),
+                tx_data.get("parent_transaction_id"),
+
+                # WHERE (transfer)
+                tx_data["transaction_type"],
+                tx_data.get("parent_transaction_id"),
             )
+
 
         new_id = self._execute(query, params)
         if new_id == 0:
-            raise TransactionError("Ownership validation failed.... Invalid Account or Category selected")
+            raise TransactionError("Ownership validation failed.... Invalid Account, Category or Parent trasaction selected")
 
         # Apply balance changes automatically
         try:
