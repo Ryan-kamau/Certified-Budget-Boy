@@ -437,6 +437,115 @@ class TransactionModel:
         result["destination_account_name"] = rows[0].get("destination_account_name")
         return result
     
+    def _update_safe_fields(self, transaction_id: int,  safe: Dict[str, Any]) -> int:
+        #Update transaction for safe fields
+        fields = ", ".join((f"{k}=%s" for k in safe.keys()))
+        params = (safe.values()) + (transaction_id, self.user_id)
+        result = self._execute(
+            f"UPDATE transactions SET {fields} WHERE transaction_id = %s AND user_id = %s", params
+        )
+        if result == 0:
+            raise TransactionNotFoundError(f"Transaction {transaction_id} not found or unchanged.")
+        return result
+        
+    def _update_sensitive_fields(self, transaction_id:int, sensitive_fields: Dict) -> int:
+        #update transactions with sensitive fields with ownership validation
+        set_clauses = []
+        join_clauses = []
+        where_clauses = ["t.transaction_id = %s", "t.user_id = %s"]
+        params = []
+
+        # Account validation
+        if "account_id" in sensitive_fields:
+            join_clauses.append("""
+                LEFT JOIN accounts a
+                ON a.account_id = %s
+                AND a.owner_id = %s
+                AND a.is_deleted = 0
+            """)
+            set_clauses.append("t.account_id = a.account_id")
+            where_clauses.append("(%s IS NULL OR a.account_id IS NOT NULL)")
+            params.extend([sensitive_fields["account_id"], self.user_id, sensitive_fields["account_id"]])
+        
+        # Category validation
+        if "category_id" in sensitive_fields:
+            join_clauses.append("""
+                LEFT JOIN categories c
+                ON c.category_id = %s
+                AND c.owner_id = %s
+                AND c.is_deleted = 0
+            """)
+            set_clauses.append("t.category_id = c.category_id")
+            where_clauses.append("(%s IS NULL OR c.category_id IS NOT NULL)")
+            params.extend([sensitive_fields["category_id"], self.user_id, sensitive_fields["category_id"]])
+        
+        # Parent transaction validation
+        if "parent_transaction_id" in sensitive_fields:
+            join_clauses.append("""
+                LEFT JOIN transactions ptx
+                ON ptx.transaction_id = %s
+                AND ptx.user_id = %s
+            """)
+            set_clauses.append("t.parent_transaction_id = ptx.transaction_id")
+            where_clauses.append("(%s IS NULL OR ptx.transaction_id IS NOT NULL)")
+            params.extend([sensitive_fields["parent_transaction_id"], self.user_id, sensitive_fields["parent_transaction_id"]])
+        
+        # Source transaction validation (for transfers)
+        if "source_transaction_id" in sensitive_fields:
+            join_clauses.append("""
+                LEFT JOIN transactions src_tx
+                ON src_tx.transaction_id = %s
+                AND src_tx.user_id = %s
+                AND src_tx.transaction_id != %s  -- Prevent self-reference
+            """)
+            set_clauses.append("t.source_transaction_id = src_tx.transaction_id")
+            where_clauses.append("(%s IS NULL OR src_tx.transaction_id IS NOT NULL)")
+            params.extend([
+                sensitive_fields["source_transaction_id"], 
+                self.user_id, 
+                transaction_id,  # Prevent self-reference
+                sensitive_fields["source_transaction_id"]
+            ])
+        
+        # Destination transaction validation (for transfers)
+        if "destination_transaction_id" in sensitive_fields:
+            join_clauses.append("""
+                LEFT JOIN transactions dest_tx
+                ON dest_tx.transaction_id = %s
+                AND dest_tx.user_id = %s
+                AND dest_tx.transaction_id != %s  -- Prevent self-reference
+            """)
+            set_clauses.append("t.destination_transaction_id = dest_tx.transaction_id")
+            where_clauses.append("(%s IS NULL OR dest_tx.transaction_id IS NOT NULL)")
+            params.extend([
+                sensitive_fields["destination_transaction_id"], 
+                self.user_id, 
+                transaction_id,  # Prevent self-reference
+                sensitive_fields["destination_transaction_id"]
+            ])
+        
+        if not set_clauses:
+            return 0  # Nothing to update
+        
+        # Add WHERE params at the end
+        params.extend([transaction_id, self.user_id])
+        
+        query = f"""
+            UPDATE transactions t
+            {' '.join(join_clauses)}
+            SET {', '.join(set_clauses)}
+            WHERE {' AND '.join(where_clauses)}
+            LIMIT 1
+        """
+        
+        result = self._execute(query, tuple(params))
+        if result == 0:
+            raise TransactionNotFoundError(
+                f"Transaction {transaction_id} not found or validation failed."
+            )
+        
+        return result
+        
     def update_transaction(self, transaction_id: int, **updates: Dict[str, Any]) -> Dict[str, Any]:
         """Update transaction fields."""
         if not updates:
@@ -465,12 +574,17 @@ class TransactionModel:
         
         fields = ", ".join((f"{k}=%s" for k in updates.keys()))
         params = tuple(updates.values()) + (transaction_id, self.user_id,)
+        # Separate safe and sensitive fields
+        SAFE = ["title", "amount", "transaction_type","transaction_date", "description", "payment_method"]
+        SENSITIVE = ["account_id", "category_id", "parent_transaction_id", "source_transaction_id", "destination_transaction_id"]
+        safe_fields = {key: value for key, value in updates.items() if key in SAFE}
+        sensitive_fields = {key: value for key, value in updates.items() if key in SENSITIVE}
+        # Update fields
+        if safe_fields:
+            self._update_safe_fields(transaction_id, self.user_id, safe_fields)
         
-        result = self._execute(
-            f"UPDATE transactions SET {fields} WHERE transaction_id = %s AND user_id = %s", params
-        )
-        if result == 0:
-            raise TransactionNotFoundError(f"Transaction {transaction_id} not found or unchanged.")
+        if sensitive_fields:
+            self._update_sensitive_fields(transaction_id, sensitive_fields)
         
         # Apply new transaction's balance effects
         if affects_balance and self.balance_service:
