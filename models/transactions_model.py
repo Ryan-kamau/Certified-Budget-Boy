@@ -249,7 +249,7 @@ class TransactionModel:
             raise TransactionValidationError(f"Missing required fields: {missing}")
         
         self._validate_transaction_accounts(tx_data)
-        self._assert_ownership(tx_data)
+        self._assert_ownership(tx_data["account_id"], tx_data["category_id"])
         current_user_id = self.user_id
         query = """
                 INSERT INTO transactions (
@@ -354,8 +354,7 @@ class TransactionModel:
                 tx_data["transaction_type"],
                 tx_data.get("parent_transaction_id"),
             )
-
-
+    
         new_id = self._execute(query, params)
         if new_id == 0:
             raise TransactionError("Ownership validation failed.... Invalid Account, Category or Parent trasaction selected")
@@ -440,7 +439,7 @@ class TransactionModel:
     def _update_safe_fields(self, transaction_id: int,  safe: Dict[str, Any]) -> int:
         #Update transaction for safe fields
         fields = ", ".join((f"{k}=%s" for k in safe.keys()))
-        params = (safe.values()) + (transaction_id, self.user_id)
+        params = tuple(safe.values()) + (transaction_id, self.user_id)
         result = self._execute(
             f"UPDATE transactions SET {fields} WHERE transaction_id = %s AND user_id = %s", params
         )
@@ -535,13 +534,12 @@ class TransactionModel:
             {' '.join(join_clauses)}
             SET {', '.join(set_clauses)}
             WHERE {' AND '.join(where_clauses)}
-            LIMIT 1
         """
         
         result = self._execute(query, tuple(params))
         if result == 0:
             raise TransactionNotFoundError(
-                f"Transaction {transaction_id} not found or validation failed."
+                f"Transaction {transaction_id} not UPDATED or VALIDATION failed."
             )
         
         return result
@@ -552,8 +550,22 @@ class TransactionModel:
             raise TransactionValidationError("No fields provided for update.")
         
         self._validate_transaction_accounts(updates)
-        self._assert_ownership(updates.get("account_id"), category_id=updates.get("category_id"))
+        self._assert_ownership(updates["account_id"], updates["categoty_id"])
+        #Update and Validate first
+        fields = ", ".join((f"{k}=%s" for k in updates.keys()))
+        params = tuple(updates.values()) + (transaction_id, self.user_id,)
+        # Separate safe and sensitive fields
+        SAFE = ["title", "amount", "transaction_type","transaction_date", "description", "payment_method"]
+        SENSITIVE = ["account_id", "category_id", "parent_transaction_id", "source_transaction_id", "destination_transaction_id"]
+        safe_fields = {key: value for key, value in updates.items() if key in SAFE}
+        sensitive_fields = {key: value for key, value in updates.items() if key in SENSITIVE}
+        # Update fields
+        if sensitive_fields:
+            self._update_sensitive_fields(transaction_id, sensitive_fields)
 
+        if safe_fields:
+            self._update_safe_fields(transaction_id, safe_fields)
+        
         old_trans = self.get_transaction(transaction_id)
         # If updating amount or accounts, validate and handle balance changes
         balance_affecting_fields = ["amount", "transaction_type", "account_id", 
@@ -571,20 +583,6 @@ class TransactionModel:
                 raise TransactionValidationError(
                     f"Failed to reverse old balance: {str(e)}"
                 )
-        
-        fields = ", ".join((f"{k}=%s" for k in updates.keys()))
-        params = tuple(updates.values()) + (transaction_id, self.user_id,)
-        # Separate safe and sensitive fields
-        SAFE = ["title", "amount", "transaction_type","transaction_date", "description", "payment_method"]
-        SENSITIVE = ["account_id", "category_id", "parent_transaction_id", "source_transaction_id", "destination_transaction_id"]
-        safe_fields = {key: value for key, value in updates.items() if key in SAFE}
-        sensitive_fields = {key: value for key, value in updates.items() if key in SENSITIVE}
-        # Update fields
-        if safe_fields:
-            self._update_safe_fields(transaction_id, self.user_id, safe_fields)
-        
-        if sensitive_fields:
-            self._update_sensitive_fields(transaction_id, sensitive_fields)
         
         # Apply new transaction's balance effects
         if affects_balance and self.balance_service:
@@ -722,26 +720,6 @@ class TransactionModel:
         recursive=True → also delete all children recursively
         """
         tx = self.get_transaction(transaction_id, include_deleted=True)
-        # ✨ NEW: Reverse balance changes when deleting
-        
-        try:
-            self.balance_service.reverse_transaction_change(
-                transaction_id=transaction_id,
-                transaction_data=tx
-            )
-        except Exception as e:
-            raise TransactionValidationError(
-                f"Failed to reverse balance on delete: {str(e)}"
-            )
-        
-        self._audit_log(
-                target_id=transaction_id,
-                action="DELETE",
-                old_values=tx,
-            )
-        user_id = self.user_id
-        if not tx:
-            raise TransactionNotFoundError(f"Transaction {transaction_id} not found.")
 
         if soft:
             self._execute("UPDATE transactions SET is_deleted = 1 WHERE transaction_id = %s AND user_id = %s", (transaction_id, user_id,))
@@ -764,6 +742,27 @@ class TransactionModel:
                     self._execute("UPDATE transactions SET is_deleted= 1 WHERE transaction_id = %s", (child.transaction_id,))
                 else:
                     self._execute("DELETE FROM transactions WHERE transaction_id = %s", (child.transaction_id,))
+        # ✨ NEW: Reverse balance changes when deleting
+        
+        try:
+            self.balance_service.reverse_transaction_change(
+                transaction_id=transaction_id,
+                transaction_data=tx
+            )
+        except Exception as e:
+            raise TransactionValidationError(
+                f"Failed to reverse balance on delete: {str(e)}"
+            )
+        
+        self._audit_log(
+                target_id=transaction_id,
+                action="DELETE",
+                old_values=tx,
+            )
+        user_id = self.user_id
+        if not tx:
+            raise TransactionNotFoundError(f"Transaction {transaction_id} not found.")
+
 
         return {
             "success": True,
