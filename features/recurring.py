@@ -98,6 +98,8 @@ class RecurringModel:
                     return result
 
                 self.conn.commit()
+                if sql.strip().upper().startswith("UPDATE"):
+                    return cursor.rowcount
                 return cursor.lastrowid
 
         except mysql.connector.Error as e:
@@ -252,7 +254,7 @@ class RecurringModel:
         except RecurringDatabaseError:
             # never let logging break the main flow; swallow after optionally recording to audit log
             try:
-                self._audit_log(recurring_id, "recurring_logs", "FAILED TO INSERT")
+                self._audit_log(recurring_id, action="FAILED TO INSERT")
             except Exception:
                 pass
 
@@ -267,15 +269,50 @@ class RecurringModel:
         
         # Validate account and category fields
         self._validate_recurring_accounts(data)
-        self._assert_ownership(data.get("account_id"), category_id=data.get("category_id"))
-
+        current_user_id = self.user["user_id"]
         # Include account fields in INSERT
         sql = """
             INSERT INTO recurring_transactions
             (owner_id, is_global, name, description, frequency, interval_value,
              next_due, amount, category_id, transaction_type, payment_method, notes,
              account_id, source_account_id, destination_account_id)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            SELECT 
+                %s AS owner_id, %s AS is_global, %s AS name, %s AS description, %s AS frequency, %s AS interval_value,
+                %s AS next_due, %s AS amount, c.category_id, %s AS transaction_type, %s AS payment_method, %s AS notes,
+                a.account_id, src.account_id, dst.account_id
+
+            FROM accounts a
+            LEFT JOIN categories c
+                ON c.category_id = %s
+                AND c.owner_id = %s
+                AND c.is_deleted = 0
+            LEFT JOIN accounts src
+                ON src.account_id = %s
+                AND src.owner_id = %s
+                AND src.is_deleted = 0
+            LEFT JOIN accounts dst
+                ON dst.account_id = %s
+                AND dst.owner_id = %s
+                AND dst.is_deleted = 0
+            WHERE
+            (
+                -- income / expense
+                (%s IN ('income','expense')
+                AND a.account_id = %s
+                AND a.owner_id = %s
+                AND a.is_deleted = 0
+                AND (%s IS NULL OR c.category_id IS NOT NULL)
+                )
+            OR
+                -- transfer
+                (%s = 'transfer'
+                AND src.account_id IS NOT NULL
+                AND dst.account_id IS NOT NULL
+                AND src.account_id <> dst.account_id
+                )
+            )
+        LIMIT 1;
+            
         """
 
         params = (
@@ -287,20 +324,36 @@ class RecurringModel:
             data.get("interval_value", 1),
             data["next_due"],
             data["amount"],
-            data.get("category_id"),
             data["transaction_type"],
             data.get("payment_method", "mobile_money"),
             data.get("notes"),
-            data.get("account_id"),
+            # category join
+            data.get("category_id"),
+            current_user_id,
+
+            # transfer joins
             data.get("source_account_id"),
+            current_user_id,
             data.get("destination_account_id"),
+            current_user_id,
+
+            # WHERE (income/expense)
+            data["transaction_type"],
+            data.get("account_id"),
+            current_user_id,
+            data.get("category_id"),
+
+            # WHERE (transfer)
+            data["transaction_type"],
         )
 
 
         new_id = self._execute(sql, params)
+        if new_id == 0:
+            raise RecurringDatabaseError("OWNERSHIP VALIDATION FAILED.... Invalid Account or Category selected")
         new_details = self.get_recurring(new_id)
 
-        self._audit_log(new_id, "recurring_transactions", "INSERT", **new_details)
+        self._audit_log(new_id, "INSERT", **new_details)
         return {"success": True, "recurring_id": new_id}
     
     def get_recurring(self, recurring_id: int, * , include_deleted: bool = False, global_view: bool = False) -> Dict[str, Any]:
@@ -395,27 +448,126 @@ class RecurringModel:
             result["destination_account_name"] = r.get("destination_account_name")
             rt.append(result)
         return rt
+    
+    def _update_safe_fields(self, recurring_id: int, current_user_id: int,  safe: Dict[str, Any]) -> int:
+        #Update recurring transaction for safe fields
+        fields = ", ".join((f"{k}=%s" for k in safe.keys()))
+        params = tuple(safe.values()) + (recurring_id, current_user_id,)
+        result = self._execute(
+            f"UPDATE recurring_transactions SET {fields} WHERE recurring_id = %s AND owner_id = %s", params
+        )
+        if result == 0:
+            raise RecurringNotFoundError(f"Recurring {recurring_id} not found or unchanged.")
+        return result
+        
+    def _update_sensitive_fields(self, recurring_id:int, current_user_id: int, sensitive_fields: Dict) -> int:
+        #update recurring transactions with sensitive fields with ownership validation
+        set_clauses = []
+        join_clauses = []
+        where_clauses = ["r.recurring_id = %s", "r.owner_id = %s"]
+        params = []
+
+        # Account validation
+        if "account_id" in sensitive_fields:
+            join_clauses.append("""
+                LEFT JOIN accounts a
+                ON a.account_id = %s
+                AND a.owner_id = %s
+                AND a.is_deleted = 0
+            """)
+            set_clauses.append("r.account_id = a.account_id")
+            where_clauses.append("(%s IS NULL OR a.account_id IS NOT NULL)")
+            params.extend([sensitive_fields["account_id"], current_user_id, sensitive_fields["account_id"]])
+        
+        # Category validation
+        if "category_id" in sensitive_fields:
+            join_clauses.append("""
+                LEFT JOIN categories c
+                ON c.category_id = %s
+                AND c.owner_id = %s
+                AND c.is_deleted = 0
+            """)
+            set_clauses.append("r.category_id = c.category_id")
+            where_clauses.append("(%s IS NULL OR c.category_id IS NOT NULL)")
+            params.extend([sensitive_fields["category_id"], current_user_id, sensitive_fields["category_id"]])
+        
+        
+        # Source account validation (for transfers)
+        if "source_account_id" in sensitive_fields:
+            join_clauses.append("""
+                LEFT JOIN accounts src
+                ON src.account_id = %s
+                AND src.owner_id = %s
+                AND src.is_deleted = 0
+            """)
+            set_clauses.append("r.source_account_id = src.account_id")
+            where_clauses.append("(%s IS NULL OR src.account_id IS NOT NULL)")
+            params.extend([
+                sensitive_fields["source_account_id"], 
+                current_user_id, 
+                sensitive_fields["source_account_id"]
+            ])
+        
+        # Destination account validation (for transfers)
+        if "destination_account_id" in sensitive_fields:
+            join_clauses.append("""
+                LEFT JOIN accounts dest
+                ON dest.account_id = %s
+                AND dest.owner_id = %s
+                AND dest.is_deleted = 0
+            """)
+            set_clauses.append("r.destination_account_id = dest.account_id")
+            where_clauses.append("(%s IS NULL OR dest.account_id IS NOT NULL)")
+            params.extend([
+                sensitive_fields["destination_account_id"], 
+                current_user_id, 
+                sensitive_fields["destination_account_id"]
+            ])
+        
+        if not set_clauses:
+            return 0  # Nothing to update
+        
+        # Add WHERE params at the end
+        params.extend([recurring_id, current_user_id])
+        
+        query = f"""
+            UPDATE recurring_transactions r
+            {' '.join(join_clauses)}
+            SET {', '.join(set_clauses)}
+            WHERE {' AND '.join(where_clauses)}
+        """
+        
+        result = self._execute(query, tuple(params))
+        if result == 0:
+            raise RecurringDatabaseError(
+                f"Recurring transaction {recurring_id} not UPDATED or VALIDATION failed."
+            )
+        return result
+        
 
     def update(self, recurring_id: int, **updates: Dict[str, Any]) -> Dict[str, Any]:
         if not updates:
             raise RecurringValidationError("No update fields provided.")
-        self._assert_ownership(updates.get("account_id"), category_id=updates.get("category_id"))
-        set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
-        params = list(updates.values())
+        
+        current_user_id = self.user["user_id"]
+        #Separate safe and sensitive fields
+        SAFE = ["is_global", "name", "description", "frequency", "interval_value", "next_due", "last_run", "max_missed_runs", 
+                "pause_until", "skip_next", "override_amount", "amount",  "transaction_type", "payment_method", "notes", "is_active",
+                "is_deleted", "created_at",
+                ]
+        SENSITIVE = ["account_id", "category_id", "parent_transaction_id", "source_account_id", "destination_account_id"]
+        safe_fields = {keys: values for keys, values in updates.items() if keys in SAFE}
+        sensitive_fields = {key: value for key, value in updates.items() if key in SENSITIVE}
+        # Update fields
+        if sensitive_fields:
+            self._update_sensitive_fields(recurring_id, current_user_id, sensitive_fields)
 
-        params.append(recurring_id)
-        params.append(self.user["user_id"])
-
-        sql = f"""
-            UPDATE recurring_transactions
-            SET {set_clause}, updated_at = NOW()
-            WHERE recurring_id = %s
-            AND owner_id = %s
-        """
-
-        self._execute(sql, tuple(params))
+        if safe_fields:
+            self._update_safe_fields(recurring_id, current_user_id, safe_fields)
+        
+        
         updated = self.get_recurring(recurring_id)
-        self._audit_log(recurring_id, "recurring_transactions", "UPDATE", **updated)
+        self._audit_log(recurring_id, "UPDATE", **updated)
 
         return {"success": True, "Updated": updated}
     
@@ -428,7 +580,6 @@ class RecurringModel:
         tx = self.get_recurring(recurring_id, include_deleted=True)
         self._audit_log(
                 target_id=recurring_id,
-                target_table="recurring_transactions",
                 action="DELETE",
             )
         user_id = self.user["user_id"]
@@ -453,7 +604,7 @@ class RecurringModel:
         """
 
         self._execute(sql, (recurring_id, self.user["user_id"]))
-        self._audit_log(recurring_id, "recurring_transactions", "UPDATE", is_deleted= False)
+        self._audit_log(recurring_id, "UPDATE", is_deleted= False)
 
         return {"success": True, "message": f"Recurring Transaction {recurring_id} restored successfully."}
 

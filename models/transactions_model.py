@@ -484,43 +484,42 @@ class TransactionModel:
                 LEFT JOIN transactions ptx
                 ON ptx.transaction_id = %s
                 AND ptx.user_id = %s
+                AND ptx.is_deleted = 0
             """)
             set_clauses.append("t.parent_transaction_id = ptx.transaction_id")
             where_clauses.append("(%s IS NULL OR ptx.transaction_id IS NOT NULL)")
             params.extend([sensitive_fields["parent_transaction_id"], self.user_id, sensitive_fields["parent_transaction_id"]])
         
-        # Source transaction validation (for transfers)
-        if "source_transaction_id" in sensitive_fields:
+        # Source account validation (for transfers)
+        if "source_account_id" in sensitive_fields:
             join_clauses.append("""
-                LEFT JOIN transactions src_tx
-                ON src_tx.transaction_id = %s
-                AND src_tx.user_id = %s
-                AND src_tx.transaction_id != %s  -- Prevent self-reference
+                LEFT JOIN accounts src
+                ON src.account_id = %s
+                AND src.owner_id = %s
+                AND src.is_deleted = 0
             """)
-            set_clauses.append("t.source_transaction_id = src_tx.transaction_id")
-            where_clauses.append("(%s IS NULL OR src_tx.transaction_id IS NOT NULL)")
+            set_clauses.append("t.source_account_id = src.account_id")
+            where_clauses.append("(%s IS NULL OR src.account_id IS NOT NULL)")
             params.extend([
-                sensitive_fields["source_transaction_id"], 
+                sensitive_fields["source_account_id"], 
                 self.user_id, 
-                transaction_id,  # Prevent self-reference
-                sensitive_fields["source_transaction_id"]
+                sensitive_fields["source_account_id"]
             ])
         
-        # Destination transaction validation (for transfers)
-        if "destination_transaction_id" in sensitive_fields:
+        # Destination account validation (for transfers)
+        if "destination_account_id" in sensitive_fields:
             join_clauses.append("""
-                LEFT JOIN transactions dest_tx
-                ON dest_tx.transaction_id = %s
-                AND dest_tx.user_id = %s
-                AND dest_tx.transaction_id != %s  -- Prevent self-reference
+                LEFT JOIN accounts dest
+                ON dest.account_id = %s
+                AND dest.owner_id = %s
+                AND dest.is_deleted = 0
             """)
-            set_clauses.append("t.destination_transaction_id = dest_tx.transaction_id")
-            where_clauses.append("(%s IS NULL OR dest_tx.transaction_id IS NOT NULL)")
+            set_clauses.append("t.destination_account_id = dest.account_id")
+            where_clauses.append("(%s IS NULL OR dest.account_id IS NOT NULL)")
             params.extend([
-                sensitive_fields["destination_transaction_id"], 
+                sensitive_fields["destination_account_id"], 
                 self.user_id, 
-                transaction_id,  # Prevent self-reference
-                sensitive_fields["destination_transaction_id"]
+                sensitive_fields["destination_account_id"]
             ])
         
         if not set_clauses:
@@ -551,12 +550,10 @@ class TransactionModel:
         
         self._validate_transaction_accounts(updates)
         self._assert_ownership(updates["account_id"], updates["categoty_id"])
-        #Update and Validate first
-        fields = ", ".join((f"{k}=%s" for k in updates.keys()))
-        params = tuple(updates.values()) + (transaction_id, self.user_id,)
+        
         # Separate safe and sensitive fields
         SAFE = ["title", "amount", "transaction_type","transaction_date", "description", "payment_method"]
-        SENSITIVE = ["account_id", "category_id", "parent_transaction_id", "source_transaction_id", "destination_transaction_id"]
+        SENSITIVE = ["account_id", "category_id", "parent_transaction_id", "source_account_id", "destination_account_id"]
         safe_fields = {key: value for key, value in updates.items() if key in SAFE}
         sensitive_fields = {key: value for key, value in updates.items() if key in SENSITIVE}
         # Update fields
