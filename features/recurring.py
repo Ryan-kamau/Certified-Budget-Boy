@@ -747,7 +747,7 @@ class RecurringModel:
                         run_date=datetime.now(),
                         amount_used = rec.override_amount if rec.override_amount is not None else rec.amount,
                         status="skipped",
-                        override_used=bool(rec.override_used),
+                        override_used=bool(rec.override_amount),
                         posted_transaction_id= None,
                         message="paused untill date",
                     )

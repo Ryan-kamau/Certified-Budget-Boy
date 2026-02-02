@@ -315,6 +315,7 @@ def main():
                         print(f"\n{i}. Log ID: {log.get('log_id')}")
                         print(f"   Account ID: {log.get('account_id')}")
                         print(f"   Action: {log.get('action')}")
+                        print(f"   Source: {log.get('source')}")
                         print(f"   Performed by: {log.get('performed_by')}")
                         
                         if log.get('old_balance') is not None or log.get('new_balance') is not None:
@@ -359,6 +360,7 @@ def main():
                     for i, log in enumerate(result, 1):
                         print(f"\n{i}. Log ID: {log.get('log_id')}")
                         print(f"   Action: {log.get('action')}")
+                        print(f"   Source: {log.get('source')}")
                         print(f"   Performed by: {log.get('performed_by')}")
                         
                         if log.get('old_balance') is not None or log.get('new_balance') is not None:

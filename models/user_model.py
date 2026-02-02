@@ -21,7 +21,7 @@ class UserModel:
         """
         db = DatabaseConnection()
         self.conn = conn or db.get_connection()
-        self.current_user: Optional[Dict[str, Any]]
+        self.current_user: Optional[Dict[str, Any]] = None
 
     #INTERNAL helpers
     def _get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
@@ -95,14 +95,14 @@ class UserModel:
 
                 password_hash = self._hash(password)
                 sec_hash = self._hash(security_answer)
-                assigned_role = "admin" if first_user else role
+                assigned_role = "admin" if first_user else "user"
 
                 cur.execute(
                     """
                     INSERT INTO users (username, password_hash, security_answer_hash, role)
                     VALUES (%s, %s, %s, %s)
                     """,
-                    (username, password_hash, sec_hash, role),
+                    (username, password_hash, sec_hash, assigned_role),
                 )
                 self.conn.commit()
                 uid = cur.lastrowid

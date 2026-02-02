@@ -79,10 +79,10 @@ def main():
                 source_account_id = None
                 destination_account_id = None
 
-                if tx_type in ["income", "expense"]:
+                if tx_type in {"income", "expense", "debt_borrowed", "debt_repaid"}:
                     account_id = int(input("Account ID (required): ").strip())
 
-                elif tx_type == "transfer":
+                elif tx_type in {"transfer", "investment_deposit", "investment_withdraw"}:
                     source_account_id = int(input("Source account ID: ").strip())
                     destination_account_id = int(input("Destination account ID: ").strip())
 
@@ -141,6 +141,7 @@ def main():
                 category_id = input("Category ID: ").strip()
                 parent_id = input("Parent ID: ").strip()
                 amount = input("New amount: ").strip()
+                transaction_type = input("New transaction type: ").strip()
                 payment = input("New payment method: ").strip()
                 description = input("New description: ").strip()
 
@@ -156,6 +157,8 @@ def main():
                     updates["category_id"] = int(category_id)
                 if parent_id:
                     updates["parent_transaction_id"] = int(parent_id)
+                if transaction_type:
+                    updates["transaction_type"] = transaction_type
                 if amount:
                     updates["amount"] = float(amount)
                 if payment:
@@ -184,7 +187,7 @@ def main():
                 print("\n📜 LIST TRANSACTIONS")
 
                 transaction_type = input(
-                    "Transaction type (income/expense/transfer/debts, blank=none): "
+                    "Transaction type (income/expense/transfer/debt_borrowed/debt_repaid/investment_deposit/investment_withdraw, blank=none): "
                 ).strip().lower() or None
 
                 payment_method = input(

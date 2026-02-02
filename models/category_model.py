@@ -185,30 +185,41 @@ class CategoryModel:
         if not affected:
             raise InvalidOperationError("No Audit logged")
         return True
-
-
-
         
-    def _validate_unique_name(self, name: str, parent_id: Optional[int], exclude_id: Optional[int]= None):
-        """Ensure category name is unique under same parent (excluding deleted)."""
-        where = "name = %s AND is_deleted = 0 AND "
-        params: Tuple[Any, ...]
-        if parent_id is None:
-            where += "parent_id is NULL"
-            params = (name,)
+    def _validate_unique_name(
+            self,
+            name: str,
+            parent_id: Optional[int],
+            exclude_id: Optional[int] = None
+        ):
+            """
+            Ensure category name is unique per user under the same parent
+            (excluding soft-deleted and optionally excluding self).
+            """
+            owner_id = self.user_id
+            where = """
+                name = %s
+                AND owner_id = %s
+                AND is_deleted = 0
+                AND (
+                    (parent_id IS NULL AND %s IS NULL)
+                    OR parent_id = %s
+                )
+            """
 
-        else:
-            where += "parent_id = %s "
-            params = (name, parent_id,)
+            params = (name, owner_id, parent_id, parent_id)
 
-        if exclude_id:
-            where += " AND category_id <> %s"
-            params += (exclude_id,) 
+            if exclude_id:
+                where += " AND category_id <> %s"
+                params += (exclude_id,)
 
-        q = f"SELECT 1 FROM categories WHERE {where} LIMIT 1"
-        rows = self._execute(q, params, fetch=True)
-        if rows:
-            raise DuplicateNameError(f"Category '{name}' already exists under this parent.")
+            q = f"SELECT 1 FROM categories WHERE {where} LIMIT 1"
+
+            exists = self._execute(q, params, fetch=True)
+            if exists:
+                raise DuplicateNameError(
+                    f"Category '{name}' already exists under this parent."
+                )
 
     def _is_descendant(self, ancestor_id: int, possible_child_id: int) -> bool:
         """Check if `possible_child_id` is within the subtree of `ancestor_id`."""
@@ -245,7 +256,6 @@ class CategoryModel:
         
         self._validate_unique_name(name, parent_id)
         owner_id = self.user_id
-        print(owner_id)
         query = """
             INSERT INTO categories (name, parent_id, is_global, owner_id, updated_by,
                                      description, created_at, updated_at, is_deleted)
@@ -260,7 +270,7 @@ class CategoryModel:
 
             self._log_audit(
                 target_id=new_id,
-                action="INSERT",
+                action="CATEGORY_CREATED",
                 new_values={"name": name, "parent_id": parent_id, "description": description, "is_global": is_global},
             )
 
@@ -330,7 +340,7 @@ class CategoryModel:
     
         self._log_audit(
             target_id=category_id,
-            action="UPDATE",
+            action="CATEGORY_UPDATED",
             old_values=cat,
             new_values={"name": new_name, "description": new_desc, "is_global": is_global},
             changed_fields=["name", "description", "is_global"],
@@ -365,7 +375,7 @@ class CategoryModel:
 
         self._log_audit(
                 target_id=category_id,
-                action="UPDATE",
+                action="CATEGORY_MOVED",
                 old_values={"old_parent_id": cat.get("parent_id")},
                 new_values={"parent_id": new_parent_id},
                 changed_fields=["parent_id"],
@@ -472,7 +482,7 @@ class CategoryModel:
         base = self.get_category(category_id, include_deleted=True)
         self._log_audit(
                 target_id=category_id,
-                action="DELETE",
+                action="CATEGORY_DELETED",
                 old_values=base,
             )
 
@@ -500,6 +510,7 @@ class CategoryModel:
                         UNION ALL
                         SELECT c2.category_id
                         FROM categories c2
+                        WHERE c2.owner_id = %s
                         INNER JOIN subtree s ON c2.parent_id = s.category_id
                     )
                     UPDATE categories
@@ -527,7 +538,7 @@ class CategoryModel:
                         INNER JOIN subtree s ON c2.parent_id = s.category_id
                     )
                     DELETE FROM categories
-                    WHERE category_id IN (SELECT category_id FROM subtree)
+                    WHERE category_id IN (SELECT category_id FROM subtree
                 """
                 params = (category_id, user_id)
             else:
@@ -558,7 +569,7 @@ class CategoryModel:
         user_id = self.user_id
         self._log_audit(
                 target_id=category_id,
-                action="UPDATE",
+                action="CATEGORY_RESTORED",
                 old_values={"is_deleted": True},
                 new_values={"is_deleted": False},
                 changed_fields=["is_deleted"],

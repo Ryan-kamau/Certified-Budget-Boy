@@ -89,7 +89,6 @@ class TransactionModel:
                     cursor.execute(query, params)
                 if fetch:
                     rows = cursor.fetchall()
-                    cursor.close()
                     return rows
                 else:
                     self.conn.commit()
@@ -203,38 +202,55 @@ class TransactionModel:
             self.accounts.assert_account_access(account_id=account_id)
         if category_id  is not None:
             self.category_mod.assert_category_access(category_id)
+    
+    def _assert_parent_transaction_exists(self, parent_id: int):
+        row = self._fetchone(
+            """
+            SELECT 1 FROM transactions
+            WHERE transaction_id = %s
+            AND user_id = %s
+            AND is_deleted = 0
+            """,
+            (parent_id, self.user_id)
+        )
+        if not row:
+            raise TransactionValidationError("Invalid parent_transaction_id")
 
     def _validate_transaction_accounts(self, tx_data: Dict[str, Any]):
         """
         Validate that account fields are correctly provided based on transaction type.
         
         Rules:
-        - income/expense: requires account_id
-        - transfer: requires source_account_id and destination_account_id
+        - income/expense/debt_borrowed/debt_repaid: requires account_id
+        - transfer/investment_deposit/investment_withdraw: requires source_account_id and destination_account_id
         """
         trans_type = tx_data.get("transaction_type")
+        source_acc = tx_data.get("source_account_id")
+        dest_acc = tx_data.get("destination_account_id")
         
-        if trans_type in ["income", "expense"]:
+        if trans_type in ["income", "expense", "debt_borrowed", "debt_repaid"]:
             if not tx_data.get("account_id"):
                 raise TransactionValidationError(
                     f"{trans_type} transaction requires 'account_id'"
                 )
         
-        elif trans_type == "transfer":
-            source_acc = tx_data.get("source_account_id")
-            dest_acc = tx_data.get("destination_account_id")
+        elif trans_type in ["transfer", "investment_deposit", "investment_withdrawal"]:
             if not source_acc:
                 raise TransactionValidationError(
-                    "transfer recurring transaction requires 'source_account_id'"
+                    f"{trans_type} transaction requires 'source_account_id'"
                 )
             if not dest_acc:
                 raise TransactionValidationError(
-                    "transfer recurring transaction requires 'destination_account_id'"
+                    f"{trans_type} transaction requires 'destination_account_id'"
                 )
             if source_acc == dest_acc:
                 raise TransactionValidationError(
-                    "Cannot transfer to the same account"
+                    "Cannot transact to the same account"
                 )
+            self.accounts.assert_account_access(account_id=source_acc)
+            self.accounts.assert_account_access(account_id=dest_acc)
+
+        elif source_acc and dest_acc:
             self.accounts.assert_account_access(account_id=source_acc)
             self.accounts.assert_account_access(account_id=dest_acc)
     
@@ -249,112 +265,130 @@ class TransactionModel:
             raise TransactionValidationError(f"Missing required fields: {missing}")
         
         self._validate_transaction_accounts(tx_data)
-        self._assert_ownership(tx_data["account_id"], tx_data["category_id"])
+        self._assert_ownership(tx_data.get("account_id"), tx_data.get("category_id"))
         current_user_id = self.user_id
         query = """
                 INSERT INTO transactions (
-            user_id,
-            category_id,
-            parent_transaction_id,
-            title,
-            description,
-            amount,
-            transaction_type,
-            payment_method,
-            transaction_date,
-            is_global,
-            account_id,
-            source_account_id,
-            destination_account_id
-        )
-        SELECT
-            %s AS user_id,
-            c.category_id,
-            ptx.transaction_id AS parent_transaction_id,
-            %s AS title,
-            %s AS description,
-            %s AS amount,
-            %s AS transaction_type,
-            %s AS payment_method,
-            %s AS transaction_date,
-            %s AS is_global,
-            a.account_id,
-            src.account_id,
-            dst.account_id
-        FROM accounts a
-        LEFT JOIN categories c
-            ON c.category_id = %s
-            AND c.owner_id = %s
-            AND c.is_deleted = 0
-        LEFT JOIN transactions ptx
-            ON ptx.transaction_id = %s
-            AND ptx.user_id = %s
-        LEFT JOIN accounts src
-            ON src.account_id = %s
-            AND src.owner_id = %s
-            AND src.is_deleted = 0
-        LEFT JOIN accounts dst
-            ON dst.account_id = %s
-            AND dst.owner_id = %s
-            AND dst.is_deleted = 0
-        WHERE
-            (
-                -- income / expense
-                (%s IN ('income','expense')
-                AND a.account_id = %s
-                AND a.owner_id = %s
-                AND a.is_deleted = 0
-                AND (%s IS NULL OR c.category_id IS NOT NULL)
-                AND (%s IS NULL OR ptx.transaction_id IS NOT NULL)
+                    user_id,
+                    category_id,
+                    parent_transaction_id,
+                    title,
+                    description,
+                    amount,
+                    transaction_type,
+                    payment_method,
+                    transaction_date,
+                    is_global,
+                    account_id,
+                    source_account_id,
+                    destination_account_id
                 )
-            OR
-                -- transfer
-                (%s = 'transfer'
-                AND src.account_id IS NOT NULL
-                AND dst.account_id IS NOT NULL
-                AND src.account_id <> dst.account_id
-                AND (%s IS NULL OR ptx.transaction_id IS NOT NULL)
-                )
-            )
-        LIMIT 1;
-        """
+                SELECT
+                    %s AS user_id,
+                    c.category_id,
+                    ptx.transaction_id AS parent_transaction_id,
+                    %s AS title,
+                    %s AS description,
+                    %s AS amount,
+                    %s AS transaction_type,
+                    %s AS payment_method,
+                    %s AS transaction_date,
+                    %s AS is_global,
+                    CASE 
+                        WHEN %s IN ('income', 'expense', 'debt_borrowed', 'debt_repaid') THEN a.account_id
+                        ELSE NULL
+                    END AS account_id,
+                    CASE 
+                        WHEN %s in ('transfer', 'investment_deposit', 'investment_withdraw') THEN src.account_id
+                        ELSE NULL
+                    END AS source_account_id,
+                    CASE 
+                        WHEN %s in ('transfer', 'investment_deposit', 'investment_withdraw') THEN dst.account_id
+                        ELSE NULL
+                    END AS destination_account_id
+                FROM (SELECT 1) AS dummy
+                LEFT JOIN categories c
+                    ON c.category_id = %s
+                    AND c.owner_id = %s
+                    AND c.is_deleted = 0
+                LEFT JOIN transactions ptx
+                    ON ptx.transaction_id = %s
+                    AND ptx.user_id = %s
+                LEFT JOIN accounts a
+                    ON a.account_id = %s
+                    AND a.owner_id = %s
+                    AND a.is_deleted = 0
+                LEFT JOIN accounts src
+                    ON src.account_id = %s
+                    AND src.owner_id = %s
+                    AND src.is_deleted = 0
+                LEFT JOIN accounts dst
+                    ON dst.account_id = %s
+                    AND dst.owner_id = %s
+                    AND dst.is_deleted = 0
+                WHERE
+                    (
+                        -- income / expense / debt_borrowed / debt_repaid
+                        (%s IN ('income', 'expense', 'debt_borrowed', 'debt_repaid')
+                        AND a.account_id IS NOT NULL
+                        AND (%s IS NULL OR c.category_id IS NOT NULL)
+                        AND (%s IS NULL OR ptx.transaction_id IS NOT NULL)
+                        )
+                    OR
+                        -- transfer/investment_deposit/investment_withdraw
+                        (%s in ('transfer', 'investment_deposit', 'investment_withdraw')
+                        AND src.account_id IS NOT NULL
+                        AND dst.account_id IS NOT NULL
+                        AND src.account_id <> dst.account_id
+                        AND (%s IS NULL OR ptx.transaction_id IS NOT NULL)
+                        )
+                    )
+                LIMIT 1;
+            """
+
         params = (
-                # SELECT
-                current_user_id,
-                tx_data["title"],
-                tx_data.get("description"),
-                tx_data["amount"],
-                tx_data["transaction_type"],
-                tx_data.get("payment_method", "mobile_money"),
-                tx_data["transaction_date"],
-                tx_data.get("is_global", 0),
+            # SELECT
+            current_user_id,
+            tx_data["title"],
+            tx_data.get("description"),
+            tx_data["amount"],
+            tx_data["transaction_type"],
+            tx_data.get("payment_method", "mobile_money"),
+            tx_data["transaction_date"],
+            tx_data.get("is_global", 0),
+            
+            # CASE statements for account columns
+            tx_data["transaction_type"],  # for account_id CASE
+            tx_data["transaction_type"],  # for source_account_id CASE
+            tx_data["transaction_type"],  # for destination_account_id CASE
 
-                # category join
-                tx_data.get("category_id"),
-                current_user_id,
+            # category join
+            tx_data.get("category_id"),
+            current_user_id,
 
-                # parent transaction join
-                tx_data.get("parent_transaction_id"),
-                current_user_id,
+            # parent transaction join
+            tx_data.get("parent_transaction_id"),
+            current_user_id,
 
-                # transfer joins
-                tx_data.get("source_account_id"),
-                current_user_id,
-                tx_data.get("destination_account_id"),
-                current_user_id,
+            # accounts join (for income/expense/debt_repaid/debt_borrowed)
+            tx_data.get("account_id"),
+            current_user_id,
 
-                # WHERE (income/expense)
-                tx_data["transaction_type"],
-                tx_data.get("account_id"),
-                current_user_id,
-                tx_data.get("category_id"),
-                tx_data.get("parent_transaction_id"),
+            # transfer/investment joins
+            tx_data.get("source_account_id"),
+            current_user_id,
+            tx_data.get("destination_account_id"),
+            current_user_id,
 
-                # WHERE (transfer)
-                tx_data["transaction_type"],
-                tx_data.get("parent_transaction_id"),
-            )
-    
+            # WHERE (income/expense/debt_borrowed/debt_repaid)
+            tx_data["transaction_type"],
+            tx_data.get("category_id"),
+            tx_data.get("parent_transaction_id"),
+
+            # WHERE (transfer/investments)
+            tx_data["transaction_type"],
+            tx_data.get("parent_transaction_id"),
+        )
         new_id = self._execute(query, params)
         if new_id == 0:
             raise TransactionError("Ownership validation failed.... Invalid Account, Category or Parent trasaction selected")
@@ -380,7 +414,7 @@ class TransactionModel:
                 f"Transaction created but balance update failed: {str(e)}"
             )
     
-        self._audit_log(new_id, action="INSERT",
+        self._audit_log(new_id, action="TRANSACTION_CREATED",
                         new_values={
                             "name": tx_data["title"], 
                             "amount": tx_data["amount"], 
@@ -447,113 +481,81 @@ class TransactionModel:
             raise TransactionNotFoundError(f"Transaction {transaction_id} not found or unchanged.")
         return result
         
-    def _update_sensitive_fields(self, transaction_id:int, sensitive_fields: Dict) -> int:
-        #update transactions with sensitive fields with ownership validation
-        set_clauses = []
-        join_clauses = []
-        where_clauses = ["t.transaction_id = %s", "t.user_id = %s"]
-        params = []
+    def _update_sensitive_fields(self, transaction_id: int, sensitive_fields: dict
+        ) -> int:
+        current_tx = self.get_transaction(transaction_id)
+        if not current_tx:
+            raise TransactionNotFoundError(f"Transaction {transaction_id} not found")
 
-        # Account validation
-        if "account_id" in sensitive_fields:
-            join_clauses.append("""
-                LEFT JOIN accounts a
-                ON a.account_id = %s
-                AND a.owner_id = %s
-                AND a.is_deleted = 0
-            """)
-            set_clauses.append("t.account_id = a.account_id")
-            where_clauses.append("(%s IS NULL OR a.account_id IS NOT NULL)")
-            params.extend([sensitive_fields["account_id"], self.user_id, sensitive_fields["account_id"]])
-        
-        # Category validation
-        if "category_id" in sensitive_fields:
-            join_clauses.append("""
-                LEFT JOIN categories c
-                ON c.category_id = %s
-                AND c.owner_id = %s
-                AND c.is_deleted = 0
-            """)
-            set_clauses.append("t.category_id = c.category_id")
-            where_clauses.append("(%s IS NULL OR c.category_id IS NOT NULL)")
-            params.extend([sensitive_fields["category_id"], self.user_id, sensitive_fields["category_id"]])
-        
-        # Parent transaction validation
+        tx_type = sensitive_fields.get(
+            "transaction_type",
+            current_tx["transaction_type"]
+        )
+
+        updates = {}
+
+        # -----------------------------
+        # TRANSACTION TYPE RULES
+        # -----------------------------
+        if tx_type in {"income", "expense", "debt_borrowed", "debt_repaid"}:
+            updates["account_id"] = sensitive_fields.get("account_id")
+            updates["source_account_id"] = None
+            updates["destination_account_id"] = None
+
+        elif tx_type in {"transfer", "investment_deposit", "investment_withdraw"}:
+            updates["account_id"] = None
+            updates["source_account_id"] = sensitive_fields.get("source_account_id")
+            updates["destination_account_id"] = sensitive_fields.get("destination_account_id")
+
+        else:
+            raise TransactionValidationError("Unknown transaction type")
+
         if "parent_transaction_id" in sensitive_fields:
-            join_clauses.append("""
-                LEFT JOIN transactions ptx
-                ON ptx.transaction_id = %s
-                AND ptx.user_id = %s
-                AND ptx.is_deleted = 0
-            """)
-            set_clauses.append("t.parent_transaction_id = ptx.transaction_id")
-            where_clauses.append("(%s IS NULL OR ptx.transaction_id IS NOT NULL)")
-            params.extend([sensitive_fields["parent_transaction_id"], self.user_id, sensitive_fields["parent_transaction_id"]])
-        
-        # Source account validation (for transfers)
-        if "source_account_id" in sensitive_fields:
-            join_clauses.append("""
-                LEFT JOIN accounts src
-                ON src.account_id = %s
-                AND src.owner_id = %s
-                AND src.is_deleted = 0
-            """)
-            set_clauses.append("t.source_account_id = src.account_id")
-            where_clauses.append("(%s IS NULL OR src.account_id IS NOT NULL)")
-            params.extend([
-                sensitive_fields["source_account_id"], 
-                self.user_id, 
-                sensitive_fields["source_account_id"]
-            ])
-        
-        # Destination account validation (for transfers)
-        if "destination_account_id" in sensitive_fields:
-            join_clauses.append("""
-                LEFT JOIN accounts dest
-                ON dest.account_id = %s
-                AND dest.owner_id = %s
-                AND dest.is_deleted = 0
-            """)
-            set_clauses.append("t.destination_account_id = dest.account_id")
-            where_clauses.append("(%s IS NULL OR dest.account_id IS NOT NULL)")
-            params.extend([
-                sensitive_fields["destination_account_id"], 
-                self.user_id, 
-                sensitive_fields["destination_account_id"]
-            ])
-        
-        if not set_clauses:
-            return 0  # Nothing to update
-        
-        # Add WHERE params at the end
-        params.extend([transaction_id, self.user_id])
-        
+            self._assert_parent_transaction_exists(sensitive_fields["parent_transaction_id"])
+            updates["parent_transaction_id"] = sensitive_fields["parent_transaction_id"]
+
+        if "transaction_type" in sensitive_fields:
+            updates["transaction_type"] = sensitive_fields["transaction_type"]
+
+        if not updates:
+            return 0
+        self._validate_transaction_accounts(updates)
+        # -----------------------------
+        # BUILD SAFE UPDATE
+        # -----------------------------
+        fields = ", ".join(f"{k} = %s" for k in updates)
+        params = list(updates.values()) + [transaction_id, self.user_id]
+
         query = f"""
-            UPDATE transactions t
-            {' '.join(join_clauses)}
-            SET {', '.join(set_clauses)}
-            WHERE {' AND '.join(where_clauses)}
+            UPDATE transactions
+            SET {fields}
+            WHERE transaction_id = %s
+            AND user_id = %s
+            AND is_deleted = 0
         """
-        
+
         result = self._execute(query, tuple(params))
         if result == 0:
             raise TransactionNotFoundError(
-                f"Transaction {transaction_id} not UPDATED or VALIDATION failed."
+                f"Transaction {transaction_id} not updated"
             )
-        
+
         return result
+
         
     def update_transaction(self, transaction_id: int, **updates: Dict[str, Any]) -> Dict[str, Any]:
         """Update transaction fields."""
         if not updates:
             raise TransactionValidationError("No fields provided for update.")
         
+        old_trans = self.get_transaction(transaction_id)
+        old_trans_type = old_trans["transfer_type"]
         self._validate_transaction_accounts(updates)
-        self._assert_ownership(updates["account_id"], updates["categoty_id"])
+        self._assert_ownership(updates.get("account_id"), updates.get("category_id"))
         
         # Separate safe and sensitive fields
-        SAFE = ["title", "amount", "transaction_type","transaction_date", "description", "payment_method"]
-        SENSITIVE = ["account_id", "category_id", "parent_transaction_id", "source_account_id", "destination_account_id"]
+        SAFE = {"title", "amount", "transaction_date", "description", "payment_method"}
+        SENSITIVE = {"account_id", "category_id", "transaction_type", "parent_transaction_id", "source_account_id", "destination_account_id"}
         safe_fields = {key: value for key, value in updates.items() if key in SAFE}
         sensitive_fields = {key: value for key, value in updates.items() if key in SENSITIVE}
         # Update fields
@@ -563,10 +565,9 @@ class TransactionModel:
         if safe_fields:
             self._update_safe_fields(transaction_id, safe_fields)
         
-        old_trans = self.get_transaction(transaction_id)
         # If updating amount or accounts, validate and handle balance changes
-        balance_affecting_fields = ["amount", "transaction_type", "account_id", 
-                                   "source_account_id", "destination_account_id"]
+        balance_affecting_fields = {"amount", "transaction_type", "account_id", 
+                                   "source_account_id", "destination_account_id"}
         affects_balance = any(field in updates for field in balance_affecting_fields)
         
         if affects_balance and self.balance_service:
@@ -574,6 +575,7 @@ class TransactionModel:
             try:
                 self.balance_service.reverse_transaction_change(
                     transaction_id=transaction_id,
+                    source=f"REVERSED_{old_trans_type}",
                     transaction_data=old_trans
                 )
             except Exception as e:
@@ -615,7 +617,7 @@ class TransactionModel:
                     f"Transaction updated but balance update failed: {str(e)}"
                 )
         
-        self._audit_log(transaction_id, action="UPDATE", old_values=old_trans, 
+        self._audit_log(transaction_id, action="TRANSACTION_UPDATED", old_values=old_trans, 
                        new_values=updates, changed_fields=list(updates.keys()))
         updated = self.get_transaction(transaction_id)
         return {"success": True, "message": "Transaction updated successfully.", "update": updated}
@@ -656,15 +658,15 @@ class TransactionModel:
             params.append(self.user_id,)
 
         if transaction_type:
-            if transaction_type not in ['income', 'expense', 'transfer', 'debts']:
-                raise TransactionValidationError(f"Transaction type Not Found ...Use: {'income','expense','transfer','debts'} ")
+            if transaction_type not in ['income', 'expense', 'transfer', 'debt_repaid', 'debt_borrowed', 'investment_deposit', 'investment_withdraw']:
+                raise TransactionValidationError(f"Transaction type Not Found ...Use: {'income', 'expense', 'transfer', 'debt_repaid', 'debt_borrowed', 'investment_deposit', 'investment_withdraw'} ")
                 
             query += " AND transaction_type = %s"
             params.append(transaction_type) 
 
         if payment_method:
             if payment_method not in ['cash','bank','mobile_money','credit_card','other']:
-                raise TransactionValidationError(f"Payment Method Not Found ...Use: {'income','expense','transfer','debts'} ")
+                raise TransactionValidationError(f"Payment Method Not Found ...Use: {'income', 'expense', 'transfer', 'debt_repaid', 'debt_borrowed', 'investment_deposit', 'investment_withdraw'} ")
             
             query += " AND payment_method = %s"
             params.append(payment_method)
@@ -717,6 +719,7 @@ class TransactionModel:
         recursive=True → also delete all children recursively
         """
         tx = self.get_transaction(transaction_id, include_deleted=True)
+        tx_trans_type = tx["transaction_type"]
 
         if soft:
             self._execute("UPDATE transactions SET is_deleted = 1 WHERE transaction_id = %s AND user_id = %s", (transaction_id, user_id,))
@@ -729,8 +732,10 @@ class TransactionModel:
                 # Reverse balance for children too
                 try:
                     child_data = self.get_transaction(child.transaction_id, include_deleted=True)
+                    child_trans_type = child_data["transaction_type"]
                     self.balance_service.reverse_transaction_change(
                         transaction_id=child.transaction_id,
+                        source=f"REVERSED_{child_trans_type}",
                         transaction_data=child_data
                     )
                 except:
@@ -744,6 +749,7 @@ class TransactionModel:
         try:
             self.balance_service.reverse_transaction_change(
                 transaction_id=transaction_id,
+                source=f"REVERSED_{tx_trans_type}",
                 transaction_data=tx
             )
         except Exception as e:
@@ -753,7 +759,7 @@ class TransactionModel:
         
         self._audit_log(
                 target_id=transaction_id,
-                action="DELETE",
+                action="TRANSACTION_DELETED",
                 old_values=tx,
             )
         user_id = self.user_id
@@ -788,7 +794,7 @@ class TransactionModel:
             )
         self._audit_log(
                 target_id=transaction_id,
-                action="UPDATE",
+                action="TRANSACTION_UPDATED",
                 old_values={"is_deleted": True},
                 new_values={"is_deleted": False},
                 changed_fields=["is_deleted"],

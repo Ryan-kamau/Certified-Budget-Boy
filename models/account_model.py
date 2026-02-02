@@ -58,22 +58,23 @@ class AccountModel:
         try:
             with self.conn.cursor(dictionary=True) as cursor:
                 cursor.execute(sql, params)
+
+                sql_upper = sql.strip().upper()
+
                 if fetchone:
-                    result = cursor.fetchone()
-                    if not sql.strip().upper().startswith("SELECT"):
-                        self.conn.commit()
-                    return result
+                    return cursor.fetchone()
+
                 if fetchall:
-                    result = cursor.fetchall()
-                    if not sql.strip().upper().startswith("SELECT"):
-                        self.conn.commit()
-                    return result
-                else:
-                    if sql.strip().upper().startswith("UPDATE"):
-                        self.conn.commit()
-                        return cursor.rowcount
+                    return cursor.fetchall()
+
+                if sql_upper.startswith("INSERT"):
                     self.conn.commit()
                     return cursor.lastrowid
+
+                if sql_upper.startswith(("UPDATE", "DELETE")):
+                    self.conn.commit()
+                    return cursor.rowcount
+
         except mysql.connector.Error as e:
             try:
                 self.conn.rollback()
@@ -96,7 +97,7 @@ class AccountModel:
             else:
                 raise AccountValidationError("Users can only view and control own data")
             
-    def _audit_logs(self, account_id: int, action: str,
+    def _audit_logs(self, account_id: int, action: str, source: Optional[str],
                     transaction_id: Optional[int] = None,
                     old_balance: Optional[int] = None, new_balance: Optional[int] = None,
                    old_values: Optional[Dict[str, Any]] = None,
@@ -104,9 +105,9 @@ class AccountModel:
                    changed_fields: Optional[List[str]] = None):
         """Insert into account_logs."""
         query = """
-        INSERT INTO account_logs (account_id, owner_id, action, transaction_id, old_balance, new_balance,
+        INSERT INTO account_logs (account_id, owner_id, action, source, transaction_id, old_balance, new_balance,
                                   old_data, new_data, changed_fields)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
 
         if new_values:
@@ -118,7 +119,7 @@ class AccountModel:
         new_json = json.dumps(new_values, default=str) if new_values else None
         changed_json = json.dumps(changed_fields, default=str) if changed_fields else None
 
-        params = (account_id, self.user["user_id"], action, transaction_id, old_balance, new_balance, old_json, new_json, changed_json)
+        params = (account_id, self.user["user_id"], action, source, transaction_id, old_balance, new_balance, old_json, new_json, changed_json)
         self._execute(query, params)
     
     def _build_account(self, row: Dict[str, Any]) -> Accounts:
@@ -128,11 +129,12 @@ class AccountModel:
     #public helper
     def audit_logs(self, account_id: int,
             action: str,
+            source: str,
             transaction_id: int,
             old_balance: float,
             new_balance: float,
             new_values: Dict[str, Any]):
-        return self._audit_logs(account_id=account_id, action=action, transaction_id=transaction_id,
+        return self._audit_logs(account_id=account_id, action=action, source=source, transaction_id=transaction_id,
                                 old_balance=old_balance, new_balance=new_balance, new_values=new_values)
     
     
@@ -166,7 +168,7 @@ class AccountModel:
         new_id = self._execute(sql, params)
         new_values = self.get_account(new_id)
 
-        self._audit_logs(new_id, action="create", new_values=new_values)
+        self._audit_logs(new_id, action="ACCOUNT_CREATED", new_values=new_values)
         return {"success": True, "account_id": new_id}
     
     def get_account(self, account_id: int, * , include_deleted: bool = False, global_view: bool = False) -> Dict[str, Any]:
@@ -196,7 +198,7 @@ class AccountModel:
         result["owned_by_username"] = row["owned_by_username"]
         return result
     
-    def update_account(self, account_id: int, **updates: Dict[str, Any]) -> Dict[str, Any]:
+    def update_account(self, account_id: int, source: str, **updates: Dict[str, Any]) -> Dict[str, Any]:
         """Update account fields."""
         if not updates:
             raise AccountValidationError("No fields provided for update.")
@@ -215,7 +217,7 @@ class AccountModel:
         updated = self.get_account(account_id)
         new_bal = updated["balance"]
         
-        self._audit_logs(account_id, action= "update", old_balance=old_bal, new_balance=new_bal, 
+        self._audit_logs(account_id, action= "ACCOUNT_UPDATED", source=source, old_balance=old_bal, new_balance=new_bal, 
                          old_values=dex, new_values= updates, changed_fields= list(updates.keys()))
         return {"success": True, "message": "Account updated successfully.", "update": updated}
     
@@ -229,6 +231,7 @@ class AccountModel:
     ) -> Dict[str, Any]:
         """Filter account by user/account type with optional pagination."""
         filter_tenant = f"a.{self._tenant_filter(global_view=global_view)}"
+        acc_types = {'cash','bank','mobile_money','credit','savings','investments','other'}
         query = f"""
                 SELECT a.*, u1.username AS owned_by_username
                 FROM accounts a
@@ -240,8 +243,8 @@ class AccountModel:
             params.append(self.user["user_id"],) 
 
         if account_type:
-            if account_type not in ['cash','bank','mobile_money','credit','savings','other']:
-                raise AccountValidationError("Account Type Not Found ...Use: ['cash','bank','mobile_money','credit','savings','other'] ")
+            if account_type not in acc_types:
+                raise AccountValidationError(f"Account Type Not Found ...Use: {acc_types} ")
             
             query += " AND a.account_type = %s"
             params.append(account_type)
@@ -280,7 +283,7 @@ class AccountModel:
             raise AccountNotFoundError(f"Account {account_id} not found.")
         self._audit_logs(
                 account_id=account_id,
-                action="delete",
+                action="ACCOUNT_DELETED",
                 old_values=dm,
             )
         user_id = self.user["user_id"]
@@ -303,7 +306,8 @@ class AccountModel:
             raise AccountNotFoundError(f"Account {account_id} not found.")
         self._audit_logs(
                 account_id=account_id,
-                action="update",
+                action="ACCOUNT_RESTORED",
+                source="Deleted_accounts",
                 old_values={"is_deleted": 1},
                 new_values={"is_deleted": 0},
                 changed_fields=["is_deleted"],

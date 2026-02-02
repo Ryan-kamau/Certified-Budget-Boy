@@ -77,17 +77,18 @@ class BalanceService:
                 cursor.execute(sql, params)
                 if fetchone:
                     result = cursor.fetchone()
-                    if not sql.strip().upper().startswith("SELECT"):
-                        self.conn.commit()
                     return result
                 if fetchall:
                     result = cursor.fetchall()
-                    if not sql.strip().upper().startswith("SELECT"):
-                        self.conn.commit()
                     return result
-                
+                sql_upper = sql.strip().upper()
+                if not sql_upper.startswith("SELECT"):
+                    self.conn.commit()
                 self.conn.commit()
-                return cursor.lastrowid if not sql.strip().upper().startswith("UPDATE") else cursor.rowcount
+                if sql_upper.startswith(("UPDATE", "DELETE")):
+                    return cursor.rowcount
+                else:
+                    return cursor.lastrowid
                 
         except mysql.connector.Error as e:
             try:
@@ -113,8 +114,7 @@ class BalanceService:
                            transaction_id: Optional[int],
                            old_balance: float,
                            new_balance: float,
-                           change_amount: float,
-                           action: str,
+                           change_amount: float, action: str, source= Optional[str],
                            notes: Optional[str] = None):
         """
         Log balance changes for audit trail.
@@ -123,6 +123,7 @@ class BalanceService:
         self.account_model.audit_logs(
             account_id=account_id,
             action=action,
+            source= source,
             transaction_id=transaction_id,
             old_balance=old_balance,
             new_balance=new_balance,
@@ -135,7 +136,7 @@ class BalanceService:
     def _check_sufficient_funds(self, account_id: int, amount: float, allow_overdraft: bool = False):
         """Check if account has sufficient funds"""
         account = self._validate_account_active(account_id)
-        current_balance = float(account.get("balance"))
+        current_balance = float(account["balance"])
         
         if not allow_overdraft and current_balance < amount:
             raise InsufficientFundsError(
@@ -147,14 +148,14 @@ class BalanceService:
     # TRANSACTION TYPE HANDLERS
     # ================================================================
     
-    def _apply_income(self, account_id: int, amount: float, transaction_id: int) -> Dict[str, Any]:
-        """Apply income transaction to account balance"""
+    def _apply_credit(self, account_id: int, amount: float, transaction_id: int, source: str) -> Dict[str, Any]:
+        """Apply inflow to account balance"""
         account = self._validate_account_active(account_id)
-        old_balance = float(account.get("balance"))
+        old_balance = float(account["balance"])
         new_balance = old_balance + amount
         
         # Update account balance
-        self.account_model.update_account(account_id, balance=new_balance)
+        self.account_model.update_account(account_id, source=source, balance=new_balance)
         
         # Log the change
         self._log_balance_change(
@@ -163,9 +164,9 @@ class BalanceService:
             old_balance=old_balance,
             new_balance=new_balance,
             change_amount=amount,
-            action="deposit_income"
+            action="CREDIT",
+            source=source
         )
-        
         return {
             "account_id": account_id,
             "old_balance": old_balance,
@@ -174,18 +175,18 @@ class BalanceService:
             "changed_by_transaction": transaction_id
         }
     
-    def _apply_expense(self, account_id: int, amount: float, transaction_id: int, 
+    def _apply_debit(self, account_id: int, amount: float, transaction_id: int, source: str,
                       allow_overdraft: bool = False) -> Dict[str, Any]:
-        """Apply expense transaction to account balance"""
+        """Apply outflow to account balance"""
         # Check sufficient funds
         self._check_sufficient_funds(account_id, amount, allow_overdraft)
-        
+      
         account = self._validate_account_active(account_id)
-        old_balance = float(account.get("balance"))
+        old_balance = float(account["balance"])
         new_balance = old_balance - amount
         
         # Update account balance
-        self.account_model.update_account(account_id, balance=new_balance)
+        self.account_model.update_account(account_id, source=source, balance=new_balance)
         
         # Log the change
         self._log_balance_change(
@@ -194,7 +195,8 @@ class BalanceService:
             old_balance=old_balance,
             new_balance=new_balance,
             change_amount=-amount,
-            action="withdraw_expense"
+            action="DEBIT",
+            source=source
         )
         
         return {
@@ -206,12 +208,13 @@ class BalanceService:
         }
     
     def _apply_transfer(self, source_account_id: int, dest_account_id: int, 
-                       amount: float, transaction_id: int,
+                       amount: float, transaction_id: int, source: str,
                        allow_overdraft: bool = False) -> Dict[str, Any]:
         """Apply transfer transaction between two accounts"""
         # Validate not same account
         if source_account_id == dest_account_id:
             raise BalanceValidationError("Cannot transfer to the same account")
+        
         
         # Check sufficient funds in source
         self._check_sufficient_funds(source_account_id, amount, allow_overdraft)
@@ -228,8 +231,8 @@ class BalanceService:
         dest_new = dest_old + amount
         
         # Update both accounts
-        self.account_model.update_account(source_account_id, balance=source_new)
-        self.account_model.update_account(dest_account_id, balance=dest_new)
+        self.account_model.update_account(source_account_id, source=source, balance=source_new)
+        self.account_model.update_account(dest_account_id, source=source, balance=dest_new)
         
         # Log both changes
         self._log_balance_change(
@@ -238,7 +241,8 @@ class BalanceService:
             old_balance=source_old,
             new_balance=source_new,
             change_amount=-amount,
-            action="transfer_out"
+            action="TRANSFER_OUT",
+            source = source
         )
         
         self._log_balance_change(
@@ -247,7 +251,8 @@ class BalanceService:
             old_balance=dest_old,
             new_balance=dest_new,
             change_amount=amount,
-            action="transfer_in"
+            action="TRANSFER_IN",
+            source=source
         )
         
         return {
@@ -265,25 +270,27 @@ class BalanceService:
             }
         }
     
-    def _reverse_transaction(self, transaction_id: int, transaction_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _reverse_transaction(self, transaction_id: int, source:str, transaction_data: Dict[str, Any]) -> Dict[str, Any]:
         """Reverse a transaction's balance effects"""
         trans_type = transaction_data.get("transaction_type")
-        amount = float(transaction_data.get("amount"))
-        account_id = transaction_data.get("account_id")
+        amount = float(transaction_data["amount"])
+        account_id = transaction_data["account_id"]
+        credited_trans_types = {"income", "debt_borrowed"}
+        debited_trans_types = {"debt_repaid", "expense"}
+        transfer_types = {"transfer", "investment_deposit", "investment_withdraw"}
+        if trans_type in credited_trans_types:
+            # Reverse credit = subtract from balance
+            return self._apply_debit(account_id, amount, transaction_id, source=source, allow_overdraft=True)
         
-        if trans_type == "income":
-            # Reverse income = subtract from balance
-            return self._apply_expense(account_id, amount, transaction_id, allow_overdraft=True)
+        elif trans_type in debited_trans_types:
+            # Reverse debit = add to balance
+            return self._apply_credit(account_id, amount, transaction_id, source=source)
         
-        elif trans_type == "expense":
-            # Reverse expense = add to balance
-            return self._apply_income(account_id, amount, transaction_id)
-        
-        elif trans_type == "transfer":
+        elif trans_type in transfer_types:
             # Reverse transfer = swap source and destination
-            source_id = transaction_data.get("source_account_id")
-            dest_id = transaction_data.get("destination_account_id")
-            return self._apply_transfer(dest_id, source_id, amount, transaction_id, allow_overdraft=True)
+            source_id = transaction_data["source_account_id"]
+            dest_id = transaction_data["destination_account_id"]
+            return self._apply_transfer(dest_id, source_id, amount, transaction_id, source=source, allow_overdraft=True)
         
         else:
             raise BalanceValidationError(f"Unknown transaction type: {trans_type}")
@@ -307,7 +314,7 @@ class BalanceService:
         
         Args:
             transaction_id: ID of the transaction
-            transaction_type: 'income', 'expense', or 'transfer'
+            transaction_type: 'income', 'expense', or 'transfer' or 'debt_borrowed' or 'debt_repaid' or 'investment_deposit' or 'investment_withdraw'
             amount: Transaction amount
             account_id: Account for income/expense
             source_account_id: Source account for transfer
@@ -317,26 +324,26 @@ class BalanceService:
         Returns:
             Dict with balance change details
         """
-        if transaction_type == "income":
+        if transaction_type in {"income", "debt_borrowed"}:
             if not account_id:
                 raise BalanceValidationError("account_id required for income")
-            return self._apply_income(account_id, amount, transaction_id)
+            return self._apply_credit(account_id, amount, transaction_id, source=transaction_type)
         
-        elif transaction_type == "expense":
+        elif transaction_type in {"expense", "debt_repaid"}:
             if not account_id:
                 raise BalanceValidationError("account_id required for expense")
-            return self._apply_expense(account_id, amount, transaction_id, allow_overdraft)
+            return self._apply_debit(account_id, amount, transaction_id, source=transaction_type, allow_overdraft=allow_overdraft)
         
-        elif transaction_type == "transfer":
+        elif transaction_type in  {"transfer", "investment_deposit", "investment_withdraw"}:
             if not source_account_id or not destination_account_id:
                 raise BalanceValidationError("source_account_id and destination_account_id required for transfer")
             return self._apply_transfer(source_account_id, destination_account_id, amount, 
-                                       transaction_id, allow_overdraft)
+                                       transaction_id, source=transaction_type, allow_overdraft=allow_overdraft)
         
         else:
             raise BalanceValidationError(f"Unknown transaction type: {transaction_type}")
     
-    def reverse_transaction_change(self, transaction_id: int, transaction_data: Dict[str, Any]) -> Dict[str, Any]:
+    def reverse_transaction_change(self, transaction_id: int, source: str, transaction_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Reverse a transaction's balance effects.
         
@@ -349,7 +356,7 @@ class BalanceService:
         Returns:
             Dict with reversal details
         """
-        return self._reverse_transaction(transaction_id, transaction_data)
+        return self._reverse_transaction(transaction_id, source, transaction_data)
     
     # ================================================================
     # PUBLIC API - BALANCE QUERIES
@@ -453,20 +460,20 @@ class BalanceService:
             trans_type = tx["transaction_type"]
             amount = float(tx["amount"])
             
-            if trans_type == "income" and tx["account_id"] == account_id:
+            if trans_type in ("income", "debt_borrowed") and tx["account_id"] == account_id:
                 calculated_balance += amount
             
-            elif trans_type == "expense" and tx["account_id"] == account_id:
+            elif trans_type in ("expense", "debt_repaid") and tx["account_id"] == account_id:
                 calculated_balance -= amount
-            
-            elif trans_type == "transfer":
+        
+            elif trans_type in ("transfer", "investment_deposit", "investment_withdraw"):
                 if tx["source_account_id"] == account_id:
                     calculated_balance -= amount
                 elif tx["destination_account_id"] == account_id:
                     calculated_balance += amount
         
         # Update account with calculated balance
-        self.account_model.update_account(account_id, balance=calculated_balance)
+        self.account_model.update_account(account_id, source="BALANCE_REBUILD", balance=calculated_balance)
         
         # Log the rebuild
         self._log_balance_change(
@@ -504,7 +511,7 @@ class BalanceService:
                         "account_id": account["account_id"],
                         "error": str(e)
                     })
-        
+
         return {
             "user_id": self.user_id,
             "accounts_rebuilt": len(results),
