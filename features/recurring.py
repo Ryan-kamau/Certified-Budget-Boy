@@ -155,20 +155,25 @@ class RecurringModel:
         Validate that account fields are correctly provided based on transaction type.
         
         Rules:
-        - income/expense: requires account_id
-        - transfer: requires source_account_id and destination_account_id
+        - income/expense/debt_borrowed/debt_repaid: requires account_id
+        - transfer/investment_deposit/investment_withdraw: requires source_account_id and destination_account_id
         """
         trans_type = data.get("transaction_type")
+        if data.get("account_id"):
+            self.accounts.assert_account_access(account_id=data.get("account_id"))
+        if data.get("source_account_id") and data.get("destination_account_id"):
+            source_acc = data.get("source_account_id")
+            dest_acc = data.get("destination_account_id")
+            self.accounts.assert_account_access(account_id=source_acc)
+            self.accounts.assert_account_access(account_id=dest_acc)
         
-        if trans_type in ["income", "expense", "debt"]:
+        if trans_type in {"income", "expense", "debt_borrowed", "debt_repaid"}:
             if not data.get("account_id"):
                 raise RecurringValidationError(
                     f"{trans_type} recurring transaction requires 'account_id'"
                 )
         
-        elif trans_type == "transfer":
-            source_acc = data.get("source_account_id")
-            dest_acc = data.get("destination_account_id")
+        elif trans_type in {"transfer", "investment_deposit", "investment_withdraw"}:
             if not source_acc:
                 raise RecurringValidationError(
                     "transfer recurring transaction requires 'source_account_id'"
@@ -296,16 +301,16 @@ class RecurringModel:
                 AND dst.is_deleted = 0
             WHERE
             (
-                -- income / expense
-                (%s IN ('income','expense')
+                -- income / expense / debt_borrowed / debt_repaid
+                (%s IN ('income','expense','debt_borrowed','debt_repaid')
                 AND a.account_id = %s
                 AND a.owner_id = %s
                 AND a.is_deleted = 0
                 AND (%s IS NULL OR c.category_id IS NOT NULL)
                 )
             OR
-                -- transfer
-                (%s = 'transfer'
+                -- transfer/investment_deposit/investment_withdraw
+                (%s IN ('transfer', 'investment_deposit', 'investment_withdraw')
                 AND src.account_id IS NOT NULL
                 AND dst.account_id IS NOT NULL
                 AND src.account_id <> dst.account_id
@@ -350,10 +355,10 @@ class RecurringModel:
 
         new_id = self._execute(sql, params)
         if new_id == 0:
-            raise RecurringDatabaseError("OWNERSHIP VALIDATION FAILED.... Invalid Account or Category selected")
+            raise RecurringDatabaseError("FAILED TO CREATE RECURRING TRANSACTION....check your data entry")
         new_details = self.get_recurring(new_id)
 
-        self._audit_log(new_id, "INSERT", **new_details)
+        self._audit_log(new_id, "RECURRING_CREATED", **new_details)
         return {"success": True, "recurring_id": new_id}
     
     def get_recurring(self, recurring_id: int, * , include_deleted: bool = False, global_view: bool = False) -> Dict[str, Any]:
@@ -427,8 +432,10 @@ class RecurringModel:
             sql += " AND r.frequency = %s"
             params.append(frequency)
         if trans_type:
-            if trans_type not in ['income', 'expense', 'transfer', 'debts']:
-                raise  RecurringValidationError("Transaction type Not Found ...Use: ('income','expense','transfer','debts') ")
+            if trans_type not in {'income', 'expense', 'transfer', 'debt_repaid', 'debt_borrowed', 
+                                  'investment_deposit', 'investment_withdraw'}:
+                raise  RecurringValidationError("Transaction type Not Found ...Use: ('income','expense','transfer','debt_repaid'," \
+                "'debt_borrowed','investment_deposit','investment_withdraw') ")
                 
             sql += " AND r.transaction_type = %s"
             params.append(trans_type) 
@@ -454,87 +461,62 @@ class RecurringModel:
         fields = ", ".join((f"{k}=%s" for k in safe.keys()))
         params = tuple(safe.values()) + (recurring_id, current_user_id,)
         result = self._execute(
-            f"UPDATE recurring_transactions SET {fields} WHERE recurring_id = %s AND owner_id = %s", params
+            f"UPDATE recurring_transactions SET {fields} WHERE recurring_id = %s AND owner_id = %s AND is_deleted = 0", params
         )
         if result == 0:
             raise RecurringNotFoundError(f"Recurring {recurring_id} not found or unchanged.")
         return result
         
+    def _build_sensitive_updates(
+            self,
+            current: dict,
+            updates: dict
+        ) -> dict:
+            tx_type = updates.get(
+                "transaction_type",
+                current["transaction_type"]
+            )
+
+            result = {}
+
+            if tx_type in {"income", "expense", "debt_borrowed", "debt_repaid"}:
+                result["account_id"] = updates.get("account_id")
+                result["source_account_id"] = None
+                result["destination_account_id"] = None
+
+            elif tx_type in {"transfer", "investment_deposit", "investment_withdraw"}:
+                result["account_id"] = None
+                result["source_account_id"] = updates.get("source_account_id")
+                result["destination_account_id"] = updates.get("destination_account_id")
+
+            else:
+                raise RecurringValidationError("Unknown transaction type")
+
+            if "category_id" in updates:
+                result["category_id"] = updates["category_id"]
+
+            return result
+
     def _update_sensitive_fields(self, recurring_id:int, current_user_id: int, sensitive_fields: Dict) -> int:
         #update recurring transactions with sensitive fields with ownership validation
-        set_clauses = []
-        join_clauses = []
-        where_clauses = ["r.recurring_id = %s", "r.owner_id = %s"]
         params = []
-
-        # Account validation
-        if "account_id" in sensitive_fields:
-            join_clauses.append("""
-                LEFT JOIN accounts a
-                ON a.account_id = %s
-                AND a.owner_id = %s
-                AND a.is_deleted = 0
-            """)
-            set_clauses.append("r.account_id = a.account_id")
-            where_clauses.append("(%s IS NULL OR a.account_id IS NOT NULL)")
-            params.extend([sensitive_fields["account_id"], current_user_id, sensitive_fields["account_id"]])
+        current_recurring = self.get_recurring(recurring_id)
+        if not current_recurring:
+            raise RecurringNotFoundError(f"Recurring transaction {recurring_id} not found.")
+        #encoding recurring type rules
+        updates = self._build_sensitive_updates(current_recurring, sensitive_fields)
+        fields = ", ".join(f"{k} = %s" for k in updates.keys())
         
-        # Category validation
-        if "category_id" in sensitive_fields:
-            join_clauses.append("""
-                LEFT JOIN categories c
-                ON c.category_id = %s
-                AND c.owner_id = %s
-                AND c.is_deleted = 0
-            """)
-            set_clauses.append("r.category_id = c.category_id")
-            where_clauses.append("(%s IS NULL OR c.category_id IS NOT NULL)")
-            params.extend([sensitive_fields["category_id"], current_user_id, sensitive_fields["category_id"]])
+        # Add params
+        params = [list(updates.values())] + [recurring_id, current_user_id]
         
-        
-        # Source account validation (for transfers)
-        if "source_account_id" in sensitive_fields:
-            join_clauses.append("""
-                LEFT JOIN accounts src
-                ON src.account_id = %s
-                AND src.owner_id = %s
-                AND src.is_deleted = 0
-            """)
-            set_clauses.append("r.source_account_id = src.account_id")
-            where_clauses.append("(%s IS NULL OR src.account_id IS NOT NULL)")
-            params.extend([
-                sensitive_fields["source_account_id"], 
-                current_user_id, 
-                sensitive_fields["source_account_id"]
-            ])
-        
-        # Destination account validation (for transfers)
-        if "destination_account_id" in sensitive_fields:
-            join_clauses.append("""
-                LEFT JOIN accounts dest
-                ON dest.account_id = %s
-                AND dest.owner_id = %s
-                AND dest.is_deleted = 0
-            """)
-            set_clauses.append("r.destination_account_id = dest.account_id")
-            where_clauses.append("(%s IS NULL OR dest.account_id IS NOT NULL)")
-            params.extend([
-                sensitive_fields["destination_account_id"], 
-                current_user_id, 
-                sensitive_fields["destination_account_id"]
-            ])
-        
-        if not set_clauses:
-            return 0  # Nothing to update
-        
-        # Add WHERE params at the end
-        params.extend([recurring_id, current_user_id])
         
         query = f"""
-            UPDATE recurring_transactions r
-            {' '.join(join_clauses)}
-            SET {', '.join(set_clauses)}
-            WHERE {' AND '.join(where_clauses)}
+            UPDATE recurring_transactions
+            SET {fields}
+            WHERE recurring_id = %s
+            AND owner_id = %s
+            AND is_deleted = 0
         """
         
         result = self._execute(query, tuple(params))
@@ -550,12 +532,21 @@ class RecurringModel:
             raise RecurringValidationError("No update fields provided.")
         
         current_user_id = self.user["user_id"]
+        self._validate_recurring_accounts(updates)
         #Separate safe and sensitive fields
-        SAFE = ["is_global", "name", "description", "frequency", "interval_value", "next_due", "last_run", "max_missed_runs", 
-                "pause_until", "skip_next", "override_amount", "amount",  "transaction_type", "payment_method", "notes", "is_active",
-                "is_deleted", "created_at",
-                ]
-        SENSITIVE = ["account_id", "category_id", "parent_transaction_id", "source_account_id", "destination_account_id"]
+        SAFE = {
+            "is_global", "name", "description", "frequency", "interval_value",
+            "next_due", "last_run", "max_missed_runs", "pause_until",
+            "skip_next", "override_amount", "amount",
+            "payment_method", "notes", "is_active"
+        }
+
+        SENSITIVE = {
+            "account_id", "category_id",
+            "source_account_id", "destination_account_id",
+            "transaction_type"
+        }
+
         safe_fields = {keys: values for keys, values in updates.items() if keys in SAFE}
         sensitive_fields = {key: value for key, value in updates.items() if key in SENSITIVE}
         # Update fields
@@ -567,7 +558,7 @@ class RecurringModel:
         
         
         updated = self.get_recurring(recurring_id)
-        self._audit_log(recurring_id, "UPDATE", **updated)
+        self._audit_log(recurring_id, "UPDATED_RECURRING", **updated)
 
         return {"success": True, "Updated": updated}
     
@@ -580,7 +571,7 @@ class RecurringModel:
         tx = self.get_recurring(recurring_id, include_deleted=True)
         self._audit_log(
                 target_id=recurring_id,
-                action="DELETE",
+                action="DELETED_RECURRING",
             )
         user_id = self.user["user_id"]
         if not tx:
@@ -604,7 +595,7 @@ class RecurringModel:
         """
 
         self._execute(sql, (recurring_id, self.user["user_id"]))
-        self._audit_log(recurring_id, "UPDATE", is_deleted= False)
+        self._audit_log(recurring_id, "RESTORED_RECURRING", is_deleted= False)
 
         return {"success": True, "message": f"Recurring Transaction {recurring_id} restored successfully."}
 

@@ -266,6 +266,7 @@ class TransactionModel:
         
         self._validate_transaction_accounts(tx_data)
         self._assert_ownership(tx_data.get("account_id"), tx_data.get("category_id"))
+        self._assert_parent_transaction_exists(tx_data["parent_transaction_id"]) if tx_data.get("parent_transaction_id") else None
         current_user_id = self.user_id
         query = """
                 INSERT INTO transactions (
@@ -475,7 +476,7 @@ class TransactionModel:
         fields = ", ".join((f"{k}=%s" for k in safe.keys()))
         params = tuple(safe.values()) + (transaction_id, self.user_id)
         result = self._execute(
-            f"UPDATE transactions SET {fields} WHERE transaction_id = %s AND user_id = %s", params
+            f"UPDATE transactions SET {fields} WHERE transaction_id = %s AND user_id = %s AND is_deleted = 0", params
         )
         if result == 0:
             raise TransactionNotFoundError(f"Transaction {transaction_id} not found or unchanged.")
@@ -519,7 +520,6 @@ class TransactionModel:
 
         if not updates:
             return 0
-        self._validate_transaction_accounts(updates)
         # -----------------------------
         # BUILD SAFE UPDATE
         # -----------------------------
