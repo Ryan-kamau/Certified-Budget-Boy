@@ -289,7 +289,7 @@ class QueryBuilder:
         self.params.extend(params)
         return self
     
-    def add_date_range(
+    def add_date_range( 
         self,
         column: str,
         start_date: Optional[date],
