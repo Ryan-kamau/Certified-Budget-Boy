@@ -89,11 +89,25 @@ class SortOptions:
 class Pagination:
     page: int = 1
     page_size: int = 50
-    
+
 @dataclass
 class ParentFilter:
     has_parent: Optional[bool] = None
     parent_id: Optional[int] = None
+
+@dataclass
+class TransactionSearchRequest:
+    text: TextSearchFilter = TextSearchFilter()
+    amount: AmountFilter = AmountFilter()
+    date: DateFilter = DateFilter()
+    category: CategoryFilter = CategoryFilter()
+    account: AccountFilter = AccountFilter()
+    tx_type: TransactionTypeFilter = TransactionTypeFilter()
+    status: StatusFilter = StatusFilter()
+    sort: SortOptions = SortOptions()
+    pagination: Pagination = Pagination()
+    parent: ParentFilter = ParentFilter()
+
 
 # ================================================================
 # Custom Exceptions
@@ -137,81 +151,25 @@ class SearchService:
     
     def search_transactions(
         self,
-        # Text search
-        search_text: Optional[str] = None,
-        search_fields: Optional[List[str]] = None,  # ['title', 'description']
-        
-        # Amount filters
-        min_amount: Optional[Union[str, float, Decimal]] = None,
-        max_amount: Optional[Union[str, float, Decimal]] = None,
-        exact_amount: Optional[Union[str, float, Decimal]] = None,
-        
-        # Date filters
-        start_date: Optional[Union[str, date]] = None,
-        end_date: Optional[Union[str, date]] = None,
-        date_preset: Optional[str] = None,  # 'this_month', 'last_30_days', etc.
-        
-        # Category filters
-        category_ids: Optional[List[int]] = None,
-        category_names: Optional[List[str]] = None,
-        include_subcategories: bool = False,
-        
-        # Account filters
-        account_ids: Optional[List[int]] = None,
-        account_types: Optional[List[str]] = None,
-        
-        # Transaction type filters
-        transaction_types: Optional[List[str]] = None,
-        payment_methods: Optional[List[str]] = None,
-        
-        # Tag filters (if you implement tags)
-        tags: Optional[List[str]] = None,
-        
-        # Status filters
-        include_deleted: bool = False,
-        global_view: bool = False,
-        
-        # Sorting
-        sort_by: str = "transaction_date",
-        sort_order: str = "DESC",
-        
-        # Pagination
-        page: int = 1,
-        page_size: int = 50,
-        
-        # Additional filters
-        has_parent: Optional[bool] = None,  # True = only children, False = only parents, None = all
-        parent_id: Optional[int] = None,
+        filters: TransactionSearchRequest
     ) -> Dict[str, Any]:
         """
         Advanced transaction search with multiple filter criteria.
         
+        
         Args:
-            search_text: Text to search in title/description
-            search_fields: Fields to search in (default: ['title', 'description'])
-            min_amount: Minimum transaction amount
-            max_amount: Maximum transaction amount
-            exact_amount: Exact transaction amount
-            start_date: Start of date range
-            end_date: End of date range
-            date_preset: Predefined date range (overrides start/end if provided)
-            category_ids: List of category IDs to filter by
-            category_names: List of category names to filter by
-            include_subcategories: Include transactions in subcategories
-            account_ids: List of account IDs
-            account_types: List of account types
-            transaction_types: List of transaction types
-            payment_methods: List of payment methods
-            tags: List of tags to filter by
-            include_deleted: Include soft-deleted transactions
-            global_view: View global transactions (admin only)
-            sort_by: Column to sort by
-            sort_order: 'ASC' or 'DESC'
-            page: Page number (1-indexed)
-            page_size: Items per page
-            has_parent: Filter by parent status
-            parent_id: Specific parent transaction ID
-            
+            filters: TransactionSearchRequest object containing all filter criteria
+            Includes:
+                - text: TextSearchFilter for full-text search
+                - amount: AmountFilter for amount-based filtering
+                - date: DateFilter for date-based filtering
+                - category: CategoryFilter for category-based filtering
+                - account: AccountFilter for account-based filtering
+                - tx_type: TransactionTypeFilter for type and payment method filtering
+                - status: StatusFilter for deleted and global view options
+                - sort: SortOptions for sorting results
+                - pagination: Pagination settings
+                - parent: ParentFilter for hierarchical relationships
         Returns:
             Dict with:
                 - results: List of matching transactions
@@ -220,5 +178,357 @@ class SearchService:
                 - summary: Aggregate statistics
                 
         Raises:
+            SearchError: If an error occurs during search execution
             SearchValidationError: If search parameters are invalid
         """
+        try:
+            # ========================================
+            # 1. VALIDATE & NORMALIZE INPUTS
+            # ========================================
+            
+            # Validate date range
+            if filters.date and filters.date.date_preset:
+                start_date, end_date = DateRangeValidator.get_preset_range(filters.date.date_preset)
+            else:
+                start_date, end_date = DateRangeValidator.validate_range(start_date, end_date)
+            
+            # Validate amount range
+            if filters.amount and filters.amount.exact_amount is not None:
+                exact_amt = AmountRangeValidator.parse_amount(filters.amount.exact_amount)
+                min_amt, max_amt = exact_amt, exact_amt
+            else:
+                min_amt, max_amt = AmountRangeValidator.validate_range(filters.amount.min_amount, filters.amount.max_amount)
+
+            # Validate transaction types
+            if filters.tx_type and filters.tx_type.transaction_types:
+                filters.tx_type.transaction_types = [
+                    ValidationPatterns.validate_transaction_type(tt) 
+                    for tt in filters.tx_type.transaction_types
+                ]
+            
+            # Validate payment methods
+            if filters.tx_type and filters.tx_type.payment_methods:
+                filters.tx_type.payment_methods = [
+                    ValidationPatterns.validate_payment_method(pm)
+                    for pm in filters.tx_type.payment_methods
+                ]
+            
+            # Validate sort order
+            sort_order = ValidationPatterns.validate_sort_order(filters.sort.sort_order if filters.sort else None)
+            
+            # Sanitize search text
+            search_text = InputSanitizer.sanitize_string(filters.text.search_text if filters.text else "", max_length=500)
+            
+            if not filters.text.search_fields:
+                filters.text.search_fields = ['title', 'description']
+
+            # ========================================
+            # 2. BUILD BASE QUERY
+            # ========================================
+            
+            base_query = """
+                SELECT 
+                    t.*,
+                    c.name AS category_name,
+                    c.description AS category_description,
+                    u.username AS owned_by_username,
+                    a.name AS account_name,
+                    sa.name AS source_account_name,
+                    da.name AS destination_account_name
+                FROM transactions t
+                LEFT JOIN categories c ON t.category_id = c.category_id
+                LEFT JOIN users u ON t.user_id = u.user_id
+                LEFT JOIN accounts a ON t.account_id = a.account_id
+                LEFT JOIN accounts sa ON t.source_account_id = sa.account_id
+                LEFT JOIN accounts da ON t.destination_account_id = da.account_id
+                WHERE 1=1
+            """
+            
+            builder = QueryBuilder(base_query)
+            
+            # ========================================
+            # 3. ADD FILTERS
+            # ========================================
+            
+            # Tenant filter
+            tenant_filter = self._get_tenant_filter("t", filters.status.global_view)
+            if tenant_filter:
+                builder.add_condition(tenant_filter, self.user_id)
+            
+            # Text search
+            if search_text:
+                search_conditions = []
+                for field in filters.text.search_fields:
+                    search_conditions.append(f"t.{field} LIKE %s")
+                
+                search_clause = f"({' OR '.join(search_conditions)})"
+                search_params = [f"%{search_text}%"] * len(filters.text.search_fields)
+                
+                builder.add_condition(search_clause, *search_params)
+            
+            # Amount filters
+            builder.add_amount_range("t.amount", min_amt, max_amt)
+            
+            # Date filters
+            builder.add_date_range("t.transaction_date", start_date, end_date)
+            
+            # Category filters
+            if filters.category.category_ids:
+                category_ids = filters.category.category_ids
+                if filters.category.include_subcategories:
+                    # Get all descendant category IDs
+                    all_category_ids = self._get_category_hierarchy(category_ids)
+                    builder.add_in_condition("t.category_id", all_category_ids)
+                else:
+                    builder.add_in_condition("t.category_id", category_ids)
+            
+            if filters.category.category_names:
+                # Convert names to IDs
+                cat_ids = self._get_category_ids_by_names(filters.category.category_names)
+                if cat_ids:
+                    builder.add_in_condition("t.category_id", cat_ids)
+            
+            # Account filters
+            if filters.account.account_ids:
+                account_ids = filters.account.account_ids
+                # Match on any account field
+                placeholders = ", ".join(["%s"] * len(account_ids))
+                account_clause = f"(t.account_id IN ({placeholders}) OR t.source_account_id IN ({placeholders}) OR t.destination_account_id IN ({placeholders}))"                
+                params = account_ids * 3
+                builder.add_condition(account_clause, *params)
+            
+            if filters.account.account_types:
+                account_ids = filters.account.account_ids or [] 
+                # Join with accounts table for type filtering
+                placeholders = ", ".join(["%s"] * len(filters.account.account_types))
+                type_clause = f"""
+                    (a.account_type IN ({placeholders}) OR sa.account_type IN ({placeholders}) OR da.account_type IN ({placeholders}))
+                """
+                params = filters.account.account_types * 3
+                builder.add_condition(type_clause, *params)
+            
+            # Transaction type filters
+            builder.add_in_condition("t.transaction_type", filters.tx_type.transaction_types)
+            
+            # Payment method filters
+            builder.add_in_condition("t.payment_method", filters.payment_method.payment_methods)
+            
+            # Parent filters
+            if filters.parent.has_parent is True:
+                builder.add_condition("t.parent_transaction_id IS NOT NULL")
+            elif filters.parent.has_parent is False:
+                builder.add_condition("t.parent_transaction_id IS NULL")
+            
+            if filters.parent.parent_id is not None:
+                builder.add_condition("t.parent_transaction_id = %s", filters.parent.parent_id)
+            
+            # ========================================
+            # 4. GET TOTAL COUNT
+            # ========================================
+            
+            count_query = f"SELECT COUNT(*) as total FROM ({builder.query}) AS count_subquery"
+            count_result = self._execute(count_query, tuple(builder.params), fetchone=True)
+            total_count = count_result['total'] if count_result else 0
+            
+            # ========================================
+            # 5. ADD SORTING AND PAGINATION
+            # ========================================
+            
+            # Sorting
+            allowed_sort_fields = [
+                'transaction_date', 'amount', 'title', 'created_at', 
+                'updated_at', 'transaction_type', 'category_name'
+            ]
+            
+            if sort_by not in allowed_sort_fields:
+                sort_by = 'transaction_date'
+            
+            builder.add_order_by(f"{sort_by} {sort_order}")
+            
+            # Pagination
+            pagination = PaginationHelper.calculate_pagination(total_count, page, page_size)
+            builder.add_limit_offset(pagination['page_size'], pagination['offset'])
+            
+            # ========================================
+            # 6. EXECUTE QUERY
+            # ========================================
+            
+            query, params = builder.build()
+            results = self._execute(query, tuple(params), fetchall=True)
+            
+            # ========================================
+            # 7. CALCULATE SUMMARY STATISTICS
+            # ========================================
+            
+            summary = self._calculate_transaction_summary(results)
+            
+            # ========================================
+            # 8. BUILD RESPONSE
+            # ========================================
+            
+            filters_applied = {
+                'search_text': search_text,
+                'date_range': FormatHelper.format_date_range(start_date, end_date),
+                'amount_range': f"{min_amt or 'Any'} - {max_amt or 'Any'}",
+                'categories': category_names or category_ids,
+                'accounts': account_ids,
+                'transaction_types': transaction_types,
+                'payment_methods': payment_methods,
+                'include_deleted': include_deleted
+            }
+            
+            return {
+                'success': True,
+                'results': results,
+                'count': len(results),
+                'pagination': pagination,
+                'filters_applied': filters_applied,
+                'summary': summary
+            }
+            
+        except (ValueError, TransactionError) as e:
+            raise SearchValidationError(f"Search validation failed: {str(e)}")
+        except Exception as e:
+            raise SearchError(f"Search failed: {str(e)}")
+    # Text search
+            if search_text:
+                search_conditions = []
+                for field in search_fields:
+                    search_conditions.append(f"t.{field} LIKE %s")
+                
+                search_clause = f"({' OR '.join(search_conditions)})"
+                search_params = [f"%{search_text}%"] * len(search_fields)
+                
+                builder.add_condition(search_clause, *search_params)
+            
+            # Amount filters
+            builder.add_amount_range("t.amount", min_amt, max_amt)
+            
+            # Date filters
+            builder.add_date_range("t.transaction_date", start_date, end_date)
+            
+            # Category filters
+            if category_ids:
+                if include_subcategories:
+                    # Get all descendant category IDs
+                    all_category_ids = self._get_category_hierarchy(category_ids)
+                    builder.add_in_condition("t.category_id", all_category_ids)
+                else:
+                    builder.add_in_condition("t.category_id", category_ids)
+            
+            if category_names:
+                # Convert names to IDs
+                cat_ids = self._get_category_ids_by_names(category_names)
+                if cat_ids:
+                    builder.add_in_condition("t.category_id", cat_ids)
+            
+            # Account filters
+            if account_ids:
+                # Match on any account field
+                account_clause = "(t.account_id IN (%s) OR t.source_account_id IN (%s) OR t.destination_account_id IN (%s))"
+                placeholders = ", ".join(["%s"] * len(account_ids))
+                account_clause = account_clause.replace("%s", placeholders, 1)
+                account_clause = account_clause.replace("%s", placeholders, 1)
+                account_clause = account_clause.replace("%s", placeholders, 1)
+                
+                params = account_ids * 3
+                builder.add_condition(account_clause, *params)
+            
+            if account_types:
+                # Join with accounts table for type filtering
+                type_clause = """
+                    (a.account_type IN (%s) OR sa.account_type IN (%s) OR da.account_type IN (%s))
+                """
+                placeholders = ", ".join(["%s"] * len(account_types))
+                type_clause = type_clause.replace("%s", placeholders, 1)
+                type_clause = type_clause.replace("%s", placeholders, 1)
+                type_clause = type_clause.replace("%s", placeholders, 1)
+                
+                params = account_types * 3
+                builder.add_condition(type_clause, *params)
+            
+            # Transaction type filters
+            builder.add_in_condition("t.transaction_type", transaction_types)
+            
+            # Payment method filters
+            builder.add_in_condition("t.payment_method", payment_methods)
+            
+            # Parent filters
+            if has_parent is True:
+                builder.add_condition("t.parent_transaction_id IS NOT NULL")
+            elif has_parent is False:
+                builder.add_condition("t.parent_transaction_id IS NULL")
+            
+            if parent_id is not None:
+                builder.add_condition("t.parent_transaction_id = %s", parent_id)
+            
+            # ========================================
+            # 4. GET TOTAL COUNT
+            # ========================================
+            
+            count_query = f"SELECT COUNT(*) as total FROM ({builder.query}) AS count_subquery"
+            count_result = self._execute(count_query, tuple(builder.params), fetchone=True)
+            total_count = count_result['total'] if count_result else 0
+            
+            # ========================================
+            # 5. ADD SORTING AND PAGINATION
+            # ========================================
+            
+            # Sorting
+            allowed_sort_fields = [
+                'transaction_date', 'amount', 'title', 'created_at', 
+                'updated_at', 'transaction_type', 'category_name'
+            ]
+            
+            if sort_by not in allowed_sort_fields:
+                sort_by = 'transaction_date'
+            
+            builder.add_order_by(f"{sort_by} {sort_order}")
+            
+            # Pagination
+            pagination = PaginationHelper.calculate_pagination(total_count, page, page_size)
+            builder.add_limit_offset(pagination['page_size'], pagination['offset'])
+            
+            # ========================================
+            # 6. EXECUTE QUERY
+            # ========================================
+            
+            query, params = builder.build()
+            results = self._execute(query, tuple(params), fetchall=True)
+            
+            # ========================================
+            # 7. CALCULATE SUMMARY STATISTICS
+            # ========================================
+            
+            summary = self._calculate_transaction_summary(results)
+            
+            # ========================================
+            # 8. BUILD RESPONSE
+            # ========================================
+            
+            filters_applied = {
+                'search_text': search_text,
+                'date_range': FormatHelper.format_date_range(start_date, end_date),
+                'amount_range': f"{min_amt or 'Any'} - {max_amt or 'Any'}",
+                'categories': category_names or category_ids,
+                'accounts': account_ids,
+                'transaction_types': transaction_types,
+                'payment_methods': payment_methods,
+                'include_deleted': include_deleted
+            }
+            
+            return {
+                'success': True,
+                'results': results,
+                'count': len(results),
+                'pagination': pagination,
+                'filters_applied': filters_applied,
+                'summary': summary
+            }
+            
+        except (ValueError, TransactionError) as e:
+            raise SearchValidationError(f"Search validation failed: {str(e)}")
+        except Exception as e:
+            raise SearchError(f"Search failed: {str(e)}")
+    
+            
