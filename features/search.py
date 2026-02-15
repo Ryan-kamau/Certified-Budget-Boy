@@ -52,11 +52,14 @@ class AmountFilter:
     min_amount: Optional[Union[str, float, Decimal]] = None
     max_amount: Optional[Union[str, float, Decimal]] = None
     exact_amount: Optional[Union[str, float, Decimal]] = None
+    negative_balance_only: bool = False
 
 @dataclass
 class DateFilter:
     start_date: Optional[Union[str, date]] = None
     end_date: Optional[Union[str, date]] = None
+    next_due_start: Optional[Union[str, date]] = None
+    next_due_end: Optional[Union[str, date]] = None
     date_preset: Optional[str] = None
 
 @dataclass
@@ -78,7 +81,11 @@ class TransactionTypeFilter:
 @dataclass
 class StatusFilter:
     include_deleted: bool = False
+    include_children: bool = False
     global_view: bool = False
+    active_only: bool = True
+    paused_only: bool = False
+    overdue_only: bool = False
 
 @dataclass
 class SortOptions:
@@ -107,6 +114,34 @@ class TransactionSearchRequest:
     sort: SortOptions = SortOptions()
     pagination: Pagination = Pagination()
     parent: ParentFilter = ParentFilter()
+
+@dataclass
+class CategorySearchRequest:
+    text: TextSearchFilter = TextSearchFilter()
+    category: CategoryFilter = CategoryFilter()
+    parent: ParentFilter = ParentFilter()
+    status: StatusFilter = StatusFilter()
+    sort: SortOptions = SortOptions(sort_by= "name", sort_order= "ASC")
+    depth_level: Optional[int] = None
+    
+@dataclass
+class AccountSearchRequest:
+    text: TextSearchFilter = TextSearchFilter()
+    account: AccountFilter = AccountFilter()
+    amount: AmountFilter = AmountFilter()
+    status: StatusFilter = StatusFilter()
+    sort: SortOptions = SortOptions(sort_by= "balance", sort_order= "DESC")
+
+@dataclass
+class RecurringSearchRequest:
+    text: TextSearchFilter = TextSearchFilter()
+    status: StatusFilter = StatusFilter()
+    date: DateFilter = DateFilter()
+    tx_type: TransactionTypeFilter = TransactionTypeFilter()
+    status: StatusFilter = StatusFilter()
+    sort: SortOptions = SortOptions(sort_by= "next_due", sort_order= "ASC")
+    frequencies: Optional[List[str]] = None
+    
 
 
 # ================================================================
@@ -190,7 +225,7 @@ class SearchService:
             if filters.date and filters.date.date_preset:
                 start_date, end_date = DateRangeValidator.get_preset_range(filters.date.date_preset)
             else:
-                start_date, end_date = DateRangeValidator.validate_range(start_date, end_date)
+                start_date, end_date = DateRangeValidator.validate_range(filters.date.start_date, filters.daate.end_date)
             
             # Validate amount range
             if filters.amount and filters.amount.exact_amount is not None:
@@ -335,18 +370,18 @@ class SearchService:
             # ========================================
             
             # Sorting
-            allowed_sort_fields = [
+            allowed_sort_fields = {
                 'transaction_date', 'amount', 'title', 'created_at', 
                 'updated_at', 'transaction_type', 'category_name'
-            ]
+            }
             
-            if sort_by not in allowed_sort_fields:
-                sort_by = 'transaction_date'
+            if filters.sort.sort_by not in allowed_sort_fields:
+                filters.sort.sort_by = 'transaction_date'
             
-            builder.add_order_by(f"{sort_by} {sort_order}")
+            builder.add_order_by(f"{filters.sort.sort_by} {sort_order}")
             
             # Pagination
-            pagination = PaginationHelper.calculate_pagination(total_count, page, page_size)
+            pagination = PaginationHelper.calculate_pagination(total_count, filters.pagination.page, filters.pagination.page_size)
             builder.add_limit_offset(pagination['page_size'], pagination['offset'])
             
             # ========================================
@@ -370,151 +405,11 @@ class SearchService:
                 'search_text': search_text,
                 'date_range': FormatHelper.format_date_range(start_date, end_date),
                 'amount_range': f"{min_amt or 'Any'} - {max_amt or 'Any'}",
-                'categories': category_names or category_ids,
-                'accounts': account_ids,
-                'transaction_types': transaction_types,
-                'payment_methods': payment_methods,
-                'include_deleted': include_deleted
-            }
-            
-            return {
-                'success': True,
-                'results': results,
-                'count': len(results),
-                'pagination': pagination,
-                'filters_applied': filters_applied,
-                'summary': summary
-            }
-            
-        except (ValueError, TransactionError) as e:
-            raise SearchValidationError(f"Search validation failed: {str(e)}")
-        except Exception as e:
-            raise SearchError(f"Search failed: {str(e)}")
-    # Text search
-            if search_text:
-                search_conditions = []
-                for field in search_fields:
-                    search_conditions.append(f"t.{field} LIKE %s")
-                
-                search_clause = f"({' OR '.join(search_conditions)})"
-                search_params = [f"%{search_text}%"] * len(search_fields)
-                
-                builder.add_condition(search_clause, *search_params)
-            
-            # Amount filters
-            builder.add_amount_range("t.amount", min_amt, max_amt)
-            
-            # Date filters
-            builder.add_date_range("t.transaction_date", start_date, end_date)
-            
-            # Category filters
-            if category_ids:
-                if include_subcategories:
-                    # Get all descendant category IDs
-                    all_category_ids = self._get_category_hierarchy(category_ids)
-                    builder.add_in_condition("t.category_id", all_category_ids)
-                else:
-                    builder.add_in_condition("t.category_id", category_ids)
-            
-            if category_names:
-                # Convert names to IDs
-                cat_ids = self._get_category_ids_by_names(category_names)
-                if cat_ids:
-                    builder.add_in_condition("t.category_id", cat_ids)
-            
-            # Account filters
-            if account_ids:
-                # Match on any account field
-                account_clause = "(t.account_id IN (%s) OR t.source_account_id IN (%s) OR t.destination_account_id IN (%s))"
-                placeholders = ", ".join(["%s"] * len(account_ids))
-                account_clause = account_clause.replace("%s", placeholders, 1)
-                account_clause = account_clause.replace("%s", placeholders, 1)
-                account_clause = account_clause.replace("%s", placeholders, 1)
-                
-                params = account_ids * 3
-                builder.add_condition(account_clause, *params)
-            
-            if account_types:
-                # Join with accounts table for type filtering
-                type_clause = """
-                    (a.account_type IN (%s) OR sa.account_type IN (%s) OR da.account_type IN (%s))
-                """
-                placeholders = ", ".join(["%s"] * len(account_types))
-                type_clause = type_clause.replace("%s", placeholders, 1)
-                type_clause = type_clause.replace("%s", placeholders, 1)
-                type_clause = type_clause.replace("%s", placeholders, 1)
-                
-                params = account_types * 3
-                builder.add_condition(type_clause, *params)
-            
-            # Transaction type filters
-            builder.add_in_condition("t.transaction_type", transaction_types)
-            
-            # Payment method filters
-            builder.add_in_condition("t.payment_method", payment_methods)
-            
-            # Parent filters
-            if has_parent is True:
-                builder.add_condition("t.parent_transaction_id IS NOT NULL")
-            elif has_parent is False:
-                builder.add_condition("t.parent_transaction_id IS NULL")
-            
-            if parent_id is not None:
-                builder.add_condition("t.parent_transaction_id = %s", parent_id)
-            
-            # ========================================
-            # 4. GET TOTAL COUNT
-            # ========================================
-            
-            count_query = f"SELECT COUNT(*) as total FROM ({builder.query}) AS count_subquery"
-            count_result = self._execute(count_query, tuple(builder.params), fetchone=True)
-            total_count = count_result['total'] if count_result else 0
-            
-            # ========================================
-            # 5. ADD SORTING AND PAGINATION
-            # ========================================
-            
-            # Sorting
-            allowed_sort_fields = [
-                'transaction_date', 'amount', 'title', 'created_at', 
-                'updated_at', 'transaction_type', 'category_name'
-            ]
-            
-            if sort_by not in allowed_sort_fields:
-                sort_by = 'transaction_date'
-            
-            builder.add_order_by(f"{sort_by} {sort_order}")
-            
-            # Pagination
-            pagination = PaginationHelper.calculate_pagination(total_count, page, page_size)
-            builder.add_limit_offset(pagination['page_size'], pagination['offset'])
-            
-            # ========================================
-            # 6. EXECUTE QUERY
-            # ========================================
-            
-            query, params = builder.build()
-            results = self._execute(query, tuple(params), fetchall=True)
-            
-            # ========================================
-            # 7. CALCULATE SUMMARY STATISTICS
-            # ========================================
-            
-            summary = self._calculate_transaction_summary(results)
-            
-            # ========================================
-            # 8. BUILD RESPONSE
-            # ========================================
-            
-            filters_applied = {
-                'search_text': search_text,
-                'date_range': FormatHelper.format_date_range(start_date, end_date),
-                'amount_range': f"{min_amt or 'Any'} - {max_amt or 'Any'}",
-                'categories': category_names or category_ids,
-                'accounts': account_ids,
-                'transaction_types': transaction_types,
-                'payment_methods': payment_methods,
-                'include_deleted': include_deleted
+                'categories': filters.category.category_names or filters.category.category_ids,
+                'accounts': filters.account.account_ids,
+                'transaction_types': filters.tx_type.transaction_types,
+                'payment_methods': filters.tx_type.payment_methods,
+                'include_deleted': filters.status.include_deleted
             }
             
             return {
@@ -531,4 +426,412 @@ class SearchService:
         except Exception as e:
             raise SearchError(f"Search failed: {str(e)}")
     
+    # ================================================================
+    # CATEGORY SEARCH
+    # ================================================================
+    
+    def search_categories(
+        self,
+        filters: CategorySearchRequest = CategorySearchRequest()
+    ) -> Dict[str, Any]:
+        """
+        Search categories with hierarchy awareness.
+        
+        Args:
+            filters.text.search_text: Text to search in category name/description
+            filters.parent.parent_id: Filter by parent category
+            filters.status.include_children: Include child categories
+            filters.depth_level: Maximum hierarchy depth to include
+            filters.status.include_deleted: Include soft-deleted categories
+            filters.status.global_view: View global categories (admin only)
+            filters.sort.sort_by: Column to sort by
+            filters.sort.sort_order: 'ASC' or 'DESC'
             
+        Returns:
+            Dict with matching categories (flat or tree structure)
+        """
+        try:
+            # Build query
+            base_query = """
+                SELECT c.*, 
+                       u1.username AS owned_by_username, 
+                       u2.username AS updated_by_username
+                FROM categories c
+                LEFT JOIN users u1 ON c.owner_id = u1.user_id
+                LEFT JOIN users u2 ON c.updated_by = u2.user_id
+                WHERE 1=1
+            """
+            
+            builder = QueryBuilder(base_query)
+            
+            # Tenant filter
+            tenant_filter = self._get_tenant_filter("c", filters.status.global_view)
+            if tenant_filter:
+                builder.add_condition(tenant_filter, self.user_id)
+            
+            # Deleted filter
+            if not filters.status.include_deleted:
+                builder.add_condition("c.is_deleted = 0")
+            
+            # Text search
+            if filters.text and filters.text.search_text:
+                search_text = InputSanitizer.sanitize_string(filters.text.search_text)
+                builder.add_condition(
+                    "(c.name LIKE %s OR c.description LIKE %s)",
+                    f"%{search_text}%", f"%{search_text}%"
+                )
+            
+            # Parent filter
+            if filters.parent and filters.parent.parent_id is not None:
+                if filters.status.include_children:
+                    # Get all descendants
+                    descendant_ids = self._get_descendant_categories(filters.parent.parent_id)
+                    descendant_ids.append(filters.parent.parent_id)
+                    builder.add_in_condition("c.category_id", descendant_ids)
+                else:
+                    builder.add_condition("c.parent_id = %s", filters.parent.parent_id)
+            
+            # Sorting
+            sort_order = ValidationPatterns.validate_sort_order(filters.sort.sort_order)
+            builder.add_order_by(f"c.{filters.sort.sort_by} {sort_order}")
+            
+            # Execute
+            query, params = builder.build()
+            results = self._execute(query, tuple(params), fetchall=True)
+            
+            return {
+                'success': True,
+                'results': results,
+                'count': len(results)
+            }
+            
+        except Exception as e:
+            raise SearchError(f"Category search failed: {str(e)}")
+    
+    # ================================================================
+    # ACCOUNT SEARCH
+    # ================================================================
+    
+    def search_accounts(
+        self,
+        filters: AccountSearchRequest
+    ) -> Dict[str, Any]:
+        """
+        Search accounts with balance and type filtering.
+        
+        Args:
+            filters.text.search_text: Text to search in account name/description
+            filters.amount.min_amount: Minimum balance
+            filters.amount.max_amount: Maximum balance
+            filters.amount.negative_balance_only: Only show accounts with negative balance
+            filters.amount.account_types: List of account types to filter by
+            filteers.status.active_only: Only show active accounts
+            filters.status.include_deleted: Include soft-deleted accounts
+            filters.status.global_view: View global accounts (admin only)
+            filters.sort.sort_by: Column to sort by
+            filters.sort.sort_order: 'ASC' or 'DESC'
+            
+        Returns:
+            Dict with matching accounts
+        """
+        try:
+            # Build query
+            base_query = """
+                SELECT a.*, u1.username AS owned_by_username
+                FROM accounts a
+                LEFT JOIN users u1 ON a.owner_id = u1.user_id
+                WHERE 1=1
+            """
+            
+            builder = QueryBuilder(base_query)
+            
+            # Tenant filter
+            tenant_filter = self._get_tenant_filter("a", filters.status.global_view)
+            if tenant_filter:
+                builder.add_condition(tenant_filter, self.user_id)
+            
+            # Active filter
+            if filters.status and filters.status.active_only:
+                builder.add_condition("a.is_active = 1")
+            
+            # Deleted filter
+            if not filters.status.include_deleted:
+                builder.add_condition("a.is_deleted = 0")
+            
+            # Text search
+            if filters.text and filters.text.search_text:
+                search_text = InputSanitizer.sanitize_string(filters.text.search_text)
+                builder.add_condition(
+                    "(a.name LIKE %s OR a.description LIKE %s)",
+                    f"%{search_text}%", f"%{search_text}%"
+                )
+            
+            # Balance filters
+            if filters.amount and filters.amount.negative_balance_only:
+                builder.add_condition("a.balance < 0")
+            else:
+                min_bal, max_bal = AmountRangeValidator.validate_range(filters.amount.min_amount, filters.amount.max_amount)
+                builder.add_amount_range("a.balance", min_bal, max_bal)
+            
+            # Type filters
+            if filters.account and filters.account.account_types:
+                builder.add_in_condition("a.account_type", filters.account.account_types)
+            
+            # Sorting
+            sort_order = ValidationPatterns.validate_sort_order(filters.sort.sort_order)
+            builder.add_order_by(f"a.{filters.sort.sort_by} {sort_order}")
+            
+            # Execute
+            query, params = builder.build()
+            results = self._execute(query, tuple(params), fetchall=True)
+            
+            # Calculate summary
+            total_balance = sum(float(r['balance']) for r in results if r['is_active'])
+            
+            return {
+                'success': True,
+                'results': results,
+                'count': len(results),
+                'summary': {
+                    'total_balance': total_balance,
+                    'active_accounts': sum(1 for r in results if r['is_active']),
+                    'negative_accounts': sum(1 for r in results if float(r['balance']) < 0)
+                }
+            }
+            
+        except Exception as e:
+            raise SearchError(f"Account search failed: {str(e)}")
+    
+    # ================================================================
+    # RECURRING TRANSACTION SEARCH
+    # ================================================================
+    
+    def search_recurring(
+        self,
+        filters: RecurringSearchRequest
+    ) -> Dict[str, Any]:
+        """
+        Search recurring transactions.
+        
+        Args:
+            filters.text.search_text: Text to search in name/notes
+            filters.frequencies: List of frequencies to filter by
+            flters.status.active_only: Only show active recurring transactions
+            filters.status.paused_only: Only show paused recurring transactions
+            filters.status.overdue_only: Only show overdue recurring transactions
+            filters.date.next_due_start: Earliest next_due date
+            filters.date.next_due_end: Latest next_due date
+            filters.tx_type.transaction_types: List of transaction types
+            filters.status.include_deleted: Include soft-deleted records
+            filters.status.global_view: View global recurring transactions
+            filters.sort.sort_by: Column to sort by
+            filters.sort.sort_order: 'ASC' or 'DESC'
+            
+        Returns:
+            Dict with matching recurring transactions
+        """
+        try:
+            # Build query
+            base_query = """
+                SELECT r.*, 
+                       u1.username AS owned_by_username, 
+                       c.name AS category_name,
+                       a.name AS account_name,
+                       sa.name AS source_account_name,
+                       da.name AS destination_account_name
+                FROM recurring_transactions r
+                LEFT JOIN users u1 ON r.owner_id = u1.user_id
+                LEFT JOIN categories c ON r.category_id = c.category_id
+                LEFT JOIN accounts a ON r.account_id = a.account_id
+                LEFT JOIN accounts sa ON r.source_account_id = sa.account_id
+                LEFT JOIN accounts da ON r.destination_account_id = da.account_id
+                WHERE 1=1
+            """
+            
+            builder = QueryBuilder(base_query)
+            
+            # Tenant filter
+            tenant_filter = self._get_tenant_filter("r", filters.status.global_view)
+            if tenant_filter:
+                builder.add_condition(tenant_filter, self.user_id)
+            
+            # Deleted filter
+            if not filters.status.include_deleted:
+                builder.add_condition("r.is_deleted = 0")
+            
+            # Text search
+            if filters.text.search_text:
+                search_text = InputSanitizer.sanitize_string(filters.text.search_text)
+                builder.add_condition(
+                    "(r.name LIKE %s OR r.notes LIKE %s)",
+                    f"%{search_text}%", f"%{search_text}%"
+                )
+            
+            # Status filters
+            if filters.status and filters.status.active_only:
+                builder.add_condition("r.is_active = 1")
+            
+            if filters.status and filters.status.paused_only:
+                builder.add_condition("r.pause_until IS NOT NULL")
+                builder.add_condition("r.pause_until > NOW()")
+            
+            if filters.status and filters.status.overdue_only:
+                builder.add_condition("r.next_due < NOW()")
+                builder.add_condition("r.is_active = 1")
+            
+            # Next due date range
+            if filters.date and filters.date.next_due_start and filters.date.next_due_end:
+                next_due_start, next_due_end = DateRangeValidator.validate_range(
+                    filters.date.next_due_start, filters.date.next_due_end
+                )
+                builder.add_date_range("r.next_due", next_due_start, next_due_end)
+            
+            # Frequency filters
+            if filters.frequencies is not None:
+                builder.add_in_condition("r.frequency", filters.frequencies)
+            
+            # Transaction type filters
+            if filters.tx_type and filters.tx_type.transaction_types is not None:
+                builder.add_in_condition("r.transaction_type", filters.tx_type.transaction_types)
+            
+            # Sorting
+            if filters.sort and filters.sort.sort_by is not None:
+                sort_order = ValidationPatterns.validate_sort_order(filters.sort.sort_order)
+                builder.add_order_by(f"r.{filters.sort.sort_by} {sort_order}")
+            
+            # Execute
+            query, params = builder.build()
+            results = self._execute(query, tuple(params), fetchall=True)
+            
+            # Calculate summary
+            now = datetime.now()
+            summary = {
+                'total_active': sum(1 for r in results if r['is_active']),
+                'total_paused': sum(1 for r in results if r['pause_until'] and r['pause_until'] > now),
+                'total_overdue': sum(1 for r in results if r['next_due'] and r['next_due'] < now and r['is_active'])
+            }
+            
+            return {
+                'success': True,
+                'results': results,
+                'count': len(results),
+                'summary': summary
+            }
+            
+        except Exception as e:
+            raise SearchError(f"Recurring search failed: {str(e)}")
+
+    # ================================================================
+    # HELPER METHODS
+    # ================================================================
+    
+    def _execute(self, sql: str, params: Tuple[Any, ...], *, fetchone: bool = False, fetchall: bool = False):
+        """Execute SQL query with error handling."""
+        # validate flags
+        if fetchone and fetchall:
+            raise SearchError("Invalid flags: fetchone and fetchall cannot both be True")
+        try:
+            with self.conn.cursor(dictionary=True) as cursor:
+                cursor.execute(sql, params)
+                
+                if fetchone:
+                    return cursor.fetchone()
+                if fetchall:
+                    return cursor.fetchall()
+                
+                self.conn.commit()
+                return cursor.lastrowid
+                
+        except mysql.connector.Error as e:
+            try:
+                self.conn.rollback()
+            except:
+                pass
+            raise SearchError(f"Database error: {str(e)}")
+    
+    def _get_tenant_filter(self, alias: str, global_view: bool) -> Optional[str]:
+        """Generate tenant filter clause."""
+        if self.role == "admin":
+            if global_view:
+                return f"{alias}.is_global = 1"
+            else:
+                return f"{alias}.owner_id = %s" if alias != "t" else f"{alias}.user_id = %s"
+        else:
+            if not global_view:
+                return f"{alias}.owner_id = %s" if alias != "t" else f"{alias}.user_id = %s"
+        return None
+    
+    def _get_category_hierarchy(self, category_ids: List[int]) -> List[int]:
+        """Get all descendant categories recursively."""
+        if not category_ids:
+            return []
+        
+        all_ids = set(category_ids)
+        
+        for cat_id in category_ids:
+            descendants = self._get_descendant_categories(cat_id)
+            all_ids.update(descendants)
+        
+        return list(all_ids)
+    
+    def _get_descendant_categories(self, parent_id: int) -> List[int]:
+        """Get all descendant category IDs."""
+        query = """
+            WITH RECURSIVE descendants AS (
+                SELECT category_id FROM categories WHERE category_id = %s
+                UNION ALL
+                SELECT c.category_id 
+                FROM categories c
+                INNER JOIN descendants d ON c.parent_id = d.category_id
+                WHERE c.is_deleted = 0
+            )
+            SELECT category_id FROM descendants WHERE category_id != %s
+        """
+        
+        results = self._execute(query, (parent_id, parent_id), fetchall=True)
+        return [r['category_id'] for r in results]
+    
+    def _get_category_ids_by_names(self, names: List[str]) -> List[int]:
+        """Convert category names to IDs."""
+        if not names:
+            return []
+        
+        placeholders = ", ".join(["%s"] * len(names))
+        query = f"""
+            SELECT category_id 
+            FROM categories 
+            WHERE name IN ({placeholders})
+              AND owner_id = %s
+              AND is_deleted = 0
+        """
+        
+        params = names + [self.user_id]
+        results = self._execute(query, tuple(params), fetchall=True)
+        return [r['category_id'] for r in results]
+    
+    def _calculate_transaction_summary(self, transactions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Calculate summary statistics for transaction results."""
+        if not transactions:
+            return {
+                'total_income': 0,
+                'total_expense': 0,
+                'total_transfers': 0,
+                'net_amount': 0,
+                'transaction_count': 0
+            }
+        
+        income = sum(float(t['amount']) for t in transactions if t['transaction_type'] in ['income', 'debt_borrowed'])
+        expense = sum(float(t['amount']) for t in transactions if t['transaction_type'] in ['expense', 'debt_repaid'])
+        transfers = sum(float(t['amount']) for t in transactions if t['transaction_type'] in ['transfer', 'investment_deposit', 'investment_withdraw'])
+        
+        return {
+            'total_income': income,
+            'total_expense': expense,
+            'total_transfers': transfers,
+            'net_amount': income - expense,
+            'transaction_count': len(transactions)
+        }
+
+
+
+    
