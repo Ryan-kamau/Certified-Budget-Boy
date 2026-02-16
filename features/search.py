@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Optional, Dict, Any, List, Tuple, Union
 from datetime import datetime, date
 from decimal import Decimal
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import mysql.connector
 
 # Import your existing models
@@ -104,42 +104,42 @@ class ParentFilter:
 
 @dataclass
 class TransactionSearchRequest:
-    text: TextSearchFilter = TextSearchFilter()
-    amount: AmountFilter = AmountFilter()
-    date: DateFilter = DateFilter()
-    category: CategoryFilter = CategoryFilter()
-    account: AccountFilter = AccountFilter()
-    tx_type: TransactionTypeFilter = TransactionTypeFilter()
-    status: StatusFilter = StatusFilter()
-    sort: SortOptions = SortOptions()
-    pagination: Pagination = Pagination()
-    parent: ParentFilter = ParentFilter()
+    text: TextSearchFilter = field(default_factory=TextSearchFilter)
+    amount: AmountFilter = field(default_factory=AmountFilter)
+    date: DateFilter = field(default_factory=DateFilter)
+    category: CategoryFilter = field(default_factory=CategoryFilter)
+    account: AccountFilter = field(default_factory=AccountFilter)
+    tx_type: TransactionTypeFilter = field(default_factory=TransactionTypeFilter())
+    status: StatusFilter = field(default_factory=StatusFilter)
+    sort: SortOptions = field(default_factory=lambda: SortOptions(sort_by="transaction_date", sort_order="DESC"))
+    pagination: Pagination = field(default_factory=lambda: Pagination(page_size=50))
+    parent: ParentFilter = field(default_factory=ParentFilter)
 
 @dataclass
 class CategorySearchRequest:
-    text: TextSearchFilter = TextSearchFilter()
-    category: CategoryFilter = CategoryFilter()
-    parent: ParentFilter = ParentFilter()
-    status: StatusFilter = StatusFilter()
-    sort: SortOptions = SortOptions(sort_by= "name", sort_order= "ASC")
+    text: TextSearchFilter = field(default_factory=TextSearchFilter)
+    category: CategoryFilter = field(default_factory=CategoryFilter)
+    parent: ParentFilter = field(default_factory=ParentFilter)
+    status: StatusFilter = field(default_factory=StatusFilter)
+    sort: SortOptions = field(default_factory=lambda: SortOptions(sort_by="name", sort_order="ASC"))
     depth_level: Optional[int] = None
     
 @dataclass
 class AccountSearchRequest:
-    text: TextSearchFilter = TextSearchFilter()
-    account: AccountFilter = AccountFilter()
-    amount: AmountFilter = AmountFilter()
-    status: StatusFilter = StatusFilter()
-    sort: SortOptions = SortOptions(sort_by= "balance", sort_order= "DESC")
+    text: TextSearchFilter = field(default_factory=TextSearchFilter)
+    account: AccountFilter = field(default_factory=AccountFilter)
+    amount: AmountFilter = field(default_factory=AmountFilter)
+    status: StatusFilter = field(default_factory=StatusFilter)
+    sort: SortOptions = field(default_factory=lambda: SortOptions(sort_by="balance", sort_order="DESC"))
 
 @dataclass
 class RecurringSearchRequest:
-    text: TextSearchFilter = TextSearchFilter()
-    status: StatusFilter = StatusFilter()
-    date: DateFilter = DateFilter()
-    tx_type: TransactionTypeFilter = TransactionTypeFilter()
-    status: StatusFilter = StatusFilter()
-    sort: SortOptions = SortOptions(sort_by= "next_due", sort_order= "ASC")
+    text: TextSearchFilter = field(default_factory=TextSearchFilter)
+    status: StatusFilter = field(default_factory=StatusFilter)
+    date: DateFilter = field(default_factory=DateFilter)
+    tx_type: TransactionTypeFilter = field(default_factory=TransactionTypeFilter)
+    status: StatusFilter = field(default_factory=StatusFilter)
+    sort: SortOptions = field(default_factory=lambda: SortOptions(sort_by="next_due", sort_order="ASC"))
     frequencies: Optional[List[str]] = None
     
 
