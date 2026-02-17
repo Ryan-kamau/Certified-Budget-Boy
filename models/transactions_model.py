@@ -549,7 +549,7 @@ class TransactionModel:
             raise TransactionValidationError("No fields provided for update.")
         
         old_trans = self.get_transaction(transaction_id)
-        old_trans_type = old_trans["transfer_type"]
+        old_trans_type = old_trans["transaction_type"]
         self._validate_transaction_accounts(updates)
         self._assert_ownership(updates.get("account_id"), updates.get("category_id"))
         

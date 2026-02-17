@@ -97,7 +97,7 @@ class AccountModel:
             else:
                 raise AccountValidationError("Users can only view and control own data")
             
-    def _audit_logs(self, account_id: int, action: str, source: Optional[str],
+    def _audit_logs(self, account_id: int, action: str, source: Optional[str] = None,
                     transaction_id: Optional[int] = None,
                     old_balance: Optional[int] = None, new_balance: Optional[int] = None,
                    old_values: Optional[Dict[str, Any]] = None,

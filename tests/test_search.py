@@ -136,6 +136,7 @@ def main():
                 
                 for tx in result['results'][:10]:  # Show first 10
                     print(f"\n💰 {tx['title']}")
+                    print(f"   Transaction_id: {tx['transaction_id']}")
                     print(f"   Amount: {tx['amount']}")
                     print(f"   Date: {tx['transaction_date']}")
                     print(f"   Type: {tx['transaction_type']}")
@@ -179,6 +180,7 @@ def main():
                 
                 for tx in result['results'][:10]:
                     print(f"\n💰 {tx['title']}: {tx['amount']:.2f}")
+                    print(f"   Transaction_id: {tx['transaction_id']}")
                     print(f"   Date: {tx['transaction_date']}")
                     print(f"   Date: {tx['transaction_date']}")
                     print(f"   Type: {tx['transaction_type']}")
@@ -216,6 +218,7 @@ def main():
                 
                 for tx in result['results'][:10]:
                     print(f"\n📆 {tx['transaction_date']}: {tx['title']}")
+                    print(f"   Transaction_id: {tx['transaction_id']}")
                     print(f"   Amount: {tx['amount']:.2f}")
                     print(f"   Date: {tx['transaction_date']}")
                     print(f"   Type: {tx['transaction_type']}")
@@ -255,6 +258,7 @@ def main():
                     for tx in result['results'][:10]:
                         print(f"\n📁 {tx['category_name'] or 'Uncategorized'}: {tx['title']}")
                         print(f"   Amount: {tx['amount']:.2f}")
+                        print(f"   Transaction_id: {tx['transaction_id']}")
                         print(f"   Date: {tx['transaction_date']}")
                         print(f"   Date: {tx['transaction_date']}")
                         print(f"   Type: {tx['transaction_type']}")
@@ -291,6 +295,7 @@ def main():
                         account_name = tx.get('account_name') or tx.get('source_account_name') or 'Unknown'
                         print(f"\n💳 {account_name}: {tx['title']}")
                         print(f"   Amount: {tx['amount']:.2f}")
+                        print(f"   Transaction_id: {tx['transaction_id']}")
                         print(f"   Date: {tx['transaction_date']}")
                         print(f"   Type: {tx['transaction_type']}")
                         print(f"   Payment Method: {tx['payment_method']}")
@@ -363,6 +368,7 @@ def main():
                 print("-" * 60)
                 for tx in result['results'][:10]:
                     print(f"\n{tx['transaction_date']} | {tx['title']}")
+                    print(f"   Transaction_id: {tx['transaction_id']}")
                     print(f"   Amount: {tx['amount']:.2f} | Type: {tx['transaction_type']}")
                     print(f"   Date: {tx['transaction_date']}")
                     print(f"   Type: {tx['transaction_type']}")
@@ -414,6 +420,7 @@ def main():
                         print(f"\n💰 Sample Transactions:")
                         for tx in result['results'][:5]:
                             print(f"\n{tx['transaction_date']}: {tx['title']}")
+                            print(f"   Transaction_id: {tx['transaction_id']}")
                             print(f"   {tx['amount']:.2f} ({tx['transaction_type']})")
                             print(f"   Date: {tx['transaction_date']}")
                             print(f"   Type: {tx['transaction_type']}")
