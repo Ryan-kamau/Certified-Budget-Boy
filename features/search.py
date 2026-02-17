@@ -109,7 +109,7 @@ class TransactionSearchRequest:
     date: DateFilter = field(default_factory=DateFilter)
     category: CategoryFilter = field(default_factory=CategoryFilter)
     account: AccountFilter = field(default_factory=AccountFilter)
-    tx_type: TransactionTypeFilter = field(default_factory=TransactionTypeFilter())
+    tx_type: TransactionTypeFilter = field(default_factory=TransactionTypeFilter)
     status: StatusFilter = field(default_factory=StatusFilter)
     sort: SortOptions = field(default_factory=lambda: SortOptions(sort_by="transaction_date", sort_order="DESC"))
     pagination: Pagination = field(default_factory=lambda: Pagination(page_size=50))
@@ -225,7 +225,7 @@ class SearchService:
             if filters.date and filters.date.date_preset:
                 start_date, end_date = DateRangeValidator.get_preset_range(filters.date.date_preset)
             else:
-                start_date, end_date = DateRangeValidator.validate_range(filters.date.start_date, filters.daate.end_date)
+                start_date, end_date = DateRangeValidator.validate_range(filters.date.start_date, filters.date.end_date)
             
             # Validate amount range
             if filters.amount and filters.amount.exact_amount is not None:
@@ -346,7 +346,7 @@ class SearchService:
             builder.add_in_condition("t.transaction_type", filters.tx_type.transaction_types)
             
             # Payment method filters
-            builder.add_in_condition("t.payment_method", filters.payment_method.payment_methods)
+            builder.add_in_condition("t.payment_method", filters.tx_type.payment_methods)
             
             # Parent filters
             if filters.parent.has_parent is True:

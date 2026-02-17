@@ -139,6 +139,10 @@ def main():
                     print(f"   Amount: {tx['amount']}")
                     print(f"   Date: {tx['transaction_date']}")
                     print(f"   Type: {tx['transaction_type']}")
+                    print(f"   Payment Method: {tx['payment_method']}")
+                    print(f"  Category: {tx.get('category_name') or 'Uncategorized'}")
+                    print(f"   Account: {tx.get('account_name') or tx.get('source_account_name') or 'Unknown'}")
+                    print(f"   Destination Account: {tx.get('destination_account_name') or 'Unknown'}")                
                     if tx.get('description'):
                         print(f"   Description: {tx['description'][:50]}...")
                 
@@ -176,7 +180,14 @@ def main():
                 for tx in result['results'][:10]:
                     print(f"\n💰 {tx['title']}: {tx['amount']:.2f}")
                     print(f"   Date: {tx['transaction_date']}")
+                    print(f"   Date: {tx['transaction_date']}")
                     print(f"   Type: {tx['transaction_type']}")
+                    print(f"   Payment Method: {tx['payment_method']}")
+                    print(f"  Category: {tx.get('category_name') or 'Uncategorized'}")
+                    print(f"   Account: {tx.get('account_name') or tx.get('source_account_name') or 'Unknown'}")
+                    print(f"   Destination Account: {tx.get('destination_account_name') or 'Unknown'}")                
+                    if tx.get('description'):
+                        print(f"   Description: {tx['description'][:50]}...")
 
             # ----------------------------
             # 3. SEARCH BY DATE RANGE
@@ -206,7 +217,14 @@ def main():
                 for tx in result['results'][:10]:
                     print(f"\n📆 {tx['transaction_date']}: {tx['title']}")
                     print(f"   Amount: {tx['amount']:.2f}")
+                    print(f"   Date: {tx['transaction_date']}")
                     print(f"   Type: {tx['transaction_type']}")
+                    print(f"   Payment Method: {tx['payment_method']}")
+                    print(f"  Category: {tx.get('category_name') or 'Uncategorized'}")
+                    print(f"   Account: {tx.get('account_name') or tx.get('source_account_name') or 'Unknown'}")
+                    print(f"   Destination Account: {tx.get('destination_account_name') or 'Unknown'}")                
+                    if tx.get('description'):
+                        print(f"   Description: {tx['description'][:50]}...")
 
             # ----------------------------
             # 4. SEARCH BY CATEGORY
@@ -238,6 +256,14 @@ def main():
                         print(f"\n📁 {tx['category_name'] or 'Uncategorized'}: {tx['title']}")
                         print(f"   Amount: {tx['amount']:.2f}")
                         print(f"   Date: {tx['transaction_date']}")
+                        print(f"   Date: {tx['transaction_date']}")
+                        print(f"   Type: {tx['transaction_type']}")
+                        print(f"   Payment Method: {tx['payment_method']}")
+                        print(f"  Category: {tx.get('category_name') or 'Uncategorized'}")
+                        print(f"   Account: {tx.get('account_name') or tx.get('source_account_name') or 'Unknown'}")
+                        print(f"   Destination Account: {tx.get('destination_account_name') or 'Unknown'}")                
+                        if tx.get('description'):
+                            print(f"   Description: {tx['description'][:50]}...")
 
             # ----------------------------
             # 5. SEARCH BY ACCOUNT
@@ -265,7 +291,14 @@ def main():
                         account_name = tx.get('account_name') or tx.get('source_account_name') or 'Unknown'
                         print(f"\n💳 {account_name}: {tx['title']}")
                         print(f"   Amount: {tx['amount']:.2f}")
+                        print(f"   Date: {tx['transaction_date']}")
                         print(f"   Type: {tx['transaction_type']}")
+                        print(f"   Payment Method: {tx['payment_method']}")
+                        print(f"  Category: {tx.get('category_name') or 'Uncategorized'}")
+                        print(f"   Account: {tx.get('account_name') or tx.get('source_account_name') or 'Unknown'}")
+                        print(f"   Destination Account: {tx.get('destination_account_name') or 'Unknown'}")                
+                        if tx.get('description'):
+                            print(f"   Description: {tx['description'][:50]}...")
 
             # ----------------------------
             # 6. ADVANCED MULTI-CRITERIA SEARCH
@@ -331,8 +364,14 @@ def main():
                 for tx in result['results'][:10]:
                     print(f"\n{tx['transaction_date']} | {tx['title']}")
                     print(f"   Amount: {tx['amount']:.2f} | Type: {tx['transaction_type']}")
-                    print(f"   Payment: {tx['payment_method']}")
-
+                    print(f"   Date: {tx['transaction_date']}")
+                    print(f"   Type: {tx['transaction_type']}")
+                    print(f"   Payment Method: {tx['payment_method']}")
+                    print(f"  Category: {tx.get('category_name') or 'Uncategorized'}")
+                    print(f"   Account: {tx.get('account_name') or tx.get('source_account_name') or 'Unknown'}")
+                    print(f"   Destination Account: {tx.get('destination_account_name') or 'Unknown'}")                
+                    if tx.get('description'):
+                        print(f"   Description: {tx['description'][:50]}...")
             # ----------------------------
             # 7. SEARCH WITH DATE PRESETS
             # ----------------------------
@@ -376,6 +415,14 @@ def main():
                         for tx in result['results'][:5]:
                             print(f"\n{tx['transaction_date']}: {tx['title']}")
                             print(f"   {tx['amount']:.2f} ({tx['transaction_type']})")
+                            print(f"   Date: {tx['transaction_date']}")
+                            print(f"   Type: {tx['transaction_type']}")
+                            print(f"   Payment Method: {tx['payment_method']}")
+                            print(f"  Category: {tx.get('category_name') or 'Uncategorized'}")
+                            print(f"   Account: {tx.get('account_name') or tx.get('source_account_name') or 'Unknown'}")
+                            print(f"   Destination Account: {tx.get('destination_account_name') or 'Unknown'}")                
+                            if tx.get('description'):
+                                print(f"   Description: {tx['description'][:50]}...")
                 
                 except ValueError as e:
                     print(f"\n❌ Error: {e}")
