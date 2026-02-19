@@ -658,7 +658,7 @@ class TransactionModel:
             params.append(self.user_id,)
 
         if transaction_type:
-            if transaction_type not in ['income', 'expense', 'transfer', 'debt_repaid', 'debt_borrowed', 'investment_deposit', 'investment_withdraw']:
+            if transaction_type not in {'income', 'expense', 'transfer', 'debt_repaid', 'debt_borrowed', 'investment_deposit', 'investment_withdraw'}:
                 raise TransactionValidationError(f"Transaction type Not Found ...Use: {'income', 'expense', 'transfer', 'debt_repaid', 'debt_borrowed', 'investment_deposit', 'investment_withdraw'} ")
                 
             query += " AND transaction_type = %s"
