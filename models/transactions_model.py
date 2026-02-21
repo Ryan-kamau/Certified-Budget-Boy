@@ -498,18 +498,19 @@ class TransactionModel:
         # -----------------------------
         # TRANSACTION TYPE RULES
         # -----------------------------
-        if tx_type in {"income", "expense", "debt_borrowed", "debt_repaid"}:
-            updates["account_id"] = sensitive_fields.get("account_id")
-            updates["source_account_id"] = None
-            updates["destination_account_id"] = None
+        if "transaction_type" in sensitive_fields:
+            if tx_type in {"income", "expense", "debt_borrowed", "debt_repaid"}:
+                updates["account_id"] = sensitive_fields.get("account_id", current_tx["account_id"])
+                updates["source_account_id"] = None
+                updates["destination_account_id"] = None
 
-        elif tx_type in {"transfer", "investment_deposit", "investment_withdraw"}:
-            updates["account_id"] = None
-            updates["source_account_id"] = sensitive_fields.get("source_account_id")
-            updates["destination_account_id"] = sensitive_fields.get("destination_account_id")
+            elif tx_type in {"transfer", "investment_deposit", "investment_withdraw"}:
+                updates["account_id"] = None
+                updates["source_account_id"] = sensitive_fields.get("source_account_id", current_tx["source_account_id"])
+                updates["destination_account_id"] = sensitive_fields.get("destination_account_id", current_tx["destination_account_id"])
 
-        else:
-            raise TransactionValidationError("Unknown transaction type")
+            else:
+                raise TransactionValidationError("Unknown transaction type")
 
         if "parent_transaction_id" in sensitive_fields:
             self._assert_parent_transaction_exists(sensitive_fields["parent_transaction_id"])
@@ -517,6 +518,10 @@ class TransactionModel:
 
         if "transaction_type" in sensitive_fields:
             updates["transaction_type"] = sensitive_fields["transaction_type"]
+
+        if "category_id" in sensitive_fields:
+            self._assert_ownership(category_id=sensitive_fields["category_id"])
+            updates["category_id"] = sensitive_fields["category_id"]
 
         if not updates:
             return 0
