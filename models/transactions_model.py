@@ -550,8 +550,15 @@ class TransactionModel:
         
         old_trans = self.get_transaction(transaction_id)
         old_trans_type = old_trans["transaction_type"]
-        self._validate_transaction_accounts(updates)
-        self._assert_ownership(updates.get("account_id"), updates.get("category_id"))
+        # Merge old + new
+        merged = old_trans.copy()
+        merged.update(updates)
+
+        # Validate full structure
+        self._validate_transaction_accounts(merged)
+
+        self._validate_transaction_accounts(merged)
+        self._assert_ownership(merged.get("account_id"), merged.get("category_id"))
         
         # Separate safe and sensitive fields
         SAFE = {"title", "amount", "transaction_date", "description", "payment_method"}
