@@ -412,7 +412,7 @@ class TransactionModel:
                 (new_id,)
             )
             raise TransactionValidationError(
-                f"Transaction created but balance update failed: {str(e)}"
+                f"Transaction CREATED and DELETED, BUT BALANCE UPDATE FAILED: {str(e)}"
             )
     
         self._audit_log(new_id, action="TRANSACTION_CREATED",
