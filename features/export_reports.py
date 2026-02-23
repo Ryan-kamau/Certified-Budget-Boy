@@ -1096,6 +1096,7 @@ class ExportService:
         Returns:
             Grouped DataFrame
         """
+        df = df.copy()
         if group_by == 'category':
             grouped = df.groupby('category_name').agg({
                 'amount': ['sum', 'count', 'mean'],
@@ -1140,4 +1141,83 @@ class ExportService:
         
         return df
     
+    def _generate_filename(
+        self,
+        prefix: str,
+        filters: Optional[TransactionSearchRequest],
+        extension: str,
+        group_by: Optional[str] = None
+    ) -> str:
+        """Generate descriptive filename for export."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        username = self.username.replace(" ", "_").lower()
+        
+        parts = [self.config.filename_prefix] if self.config.filename_prefix else []
+        parts.append(prefix)
+        parts.append(username)
+        
+        if group_by:
+            parts.append(f"by_{group_by}")
+        
+        parts.append(timestamp)
+        
+        filename = "_".join(filter(None, parts)) + f".{extension}"
+        return filename
     
+    def _create_metadata(
+        self,
+        filename: str,
+        filepath: str,
+        format: str,
+        record_count: int,
+        filters: Dict[str, Any]
+    ) -> ExportMetadata:
+        """Create export metadata object."""
+        file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
+        
+        date_range = filters.get('date_range', 'All dates')
+        
+        return ExportMetadata(
+            filename=filename,
+            filepath=filepath,
+            format=format,
+            generated_at=datetime.now(),
+            record_count=record_count,
+            date_range=date_range,
+            filters_applied=filters,
+            file_size_bytes=file_size
+        )
+    
+    def _create_pdf_metadata_section(
+        self,
+        result: Dict[str, Any],
+        styles
+    ) -> List:
+        """Create PDF metadata section."""
+        story = []
+        
+        meta_style = ParagraphStyle(
+            'MetaStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=colors.grey
+        )
+        
+        story.append(Paragraph(
+            f"<b>Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            meta_style
+        ))
+        story.append(Paragraph(
+            f"<b>User:</b> {self.username}",
+            meta_style
+        ))
+        story.append(Paragraph(
+            f"<b>Date Range:</b> {result['filters_applied']['date_range']}",
+            meta_style
+        ))
+        story.append(Paragraph(
+            f"<b>Total Records:</b> {result['count']}",
+            meta_style
+        ))
+        
+        return story
