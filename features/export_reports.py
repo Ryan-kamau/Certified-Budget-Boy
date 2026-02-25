@@ -1355,4 +1355,257 @@ class ExportService:
     # ================================================================
     
     def _create_transactions_sheet(self, wb, transactions):
-        
+        """Create formatted transactions sheet."""
+        ws = wb.create_sheet("Transactions")
+        df = pd.DataFrame(transactions)
+        columns = ['transaction_id', 'transaction_date', 'title', 'amount', 'transaction_type', 'payment_method', 'category_name', 'account_name', 'description']
+        columns = [col for col in columns if col in df.columns]
+        df = df[columns]
+        self._write_dataframe_to_sheet(ws, df, "Transaction Details")
+        if len(df) > 0:
+            table = ExcelTable(displayName="TransactionsTable", ref=f"A1:{self._get_column_letter(len(columns))}{len(df) + 1}")
+            style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+            table.tableStyleInfo = style
+            ws.add_table(table)
+
+    def _create_summary_sheet(self, wb, summary, filters):
+        """Create summary sheet with key metrics."""
+        ws = wb.create_sheet("Summary", 0)
+        ws['A1'] = "Transaction Summary"
+        ws['A1'].font = Font(size=16, bold=True, color="1F4E78")
+        ws.merge_cells('A1:B1')
+        row = 3
+        ws[f'A{row}'] = "Report Generated:"
+        ws[f'B{row}'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        row += 1
+        ws[f'A{row}'] = "Date Range:"
+        ws[f'B{row}'] = filters.get('date_range', 'All dates')
+        row += 1
+        ws[f'A{row}'] = "User:"
+        ws[f'B{row}'] = self.username
+        row += 2
+        ws[f'A{row}'] = "Financial Summary"
+        ws[f'A{row}'].font = Font(size=14, bold=True, color="1F4E78")
+        row += 1
+        metrics = [("Total Income", summary['total_income'], "00B050"), ("Total Expense", summary['total_expense'], "C00000"), ("Total Transfers", summary['total_transfers'], "7030A0"), ("Net Amount", summary['net_amount'], "0070C0"), ("Transaction Count", summary['transaction_count'], "808080")]
+        for metric_name, value, color in metrics:
+            row += 1
+            ws[f'A{row}'] = metric_name
+            ws[f'A{row}'].font = Font(bold=True)
+            if isinstance(value, (int, float)):
+                if metric_name == "Transaction Count":
+                    ws[f'B{row}'] = value
+                else:
+                    ws[f'B{row}'] = float(value)
+                    ws[f'B{row}'].number_format = '#,##0.00'
+                ws[f'B{row}'].font = Font(bold=True, color=color)
+            else:
+                ws[f'B{row}'] = value
+        for col in ['A', 'B']:
+            ws.column_dimensions[col].width = 20
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        for row_num in range(8, 8 + len(metrics)):
+            for col in ['A', 'B']:
+                ws[f'{col}{row_num}'].border = thin_border
+    
+    def _create_category_breakdown_sheet(self, wb, transactions):
+        """Create category breakdown sheet with formulas."""
+        ws = wb.create_sheet("By Category")
+        df = pd.DataFrame(transactions)
+        if 'category_name' not in df.columns:
+            return
+        grouped = df.groupby('category_name').agg({'amount': ['sum', 'count', 'mean', 'min', 'max']}).round(2)
+        grouped.columns = ['Total', 'Count', 'Average', 'Min', 'Max']
+        grouped = grouped.reset_index()
+        grouped.columns = ['Category', 'Total Amount', 'Count', 'Average', 'Min', 'Max']
+        ws['A1'] = "Category Breakdown"
+        ws['A1'].font = Font(size=14, bold=True, color="1F4E78")
+        ws.merge_cells('A1:F1')
+        for r_idx, row in enumerate(dataframe_to_rows(grouped, index=False, header=True), 2):
+            for c_idx, value in enumerate(row, 1):
+                cell = ws.cell(row=r_idx, column=c_idx, value=value)
+                if r_idx == 2:
+                    cell.font = Font(bold=True, color="FFFFFF")
+                    cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+                    cell.alignment = Alignment(horizontal="center")
+                elif c_idx > 1:
+                    cell.number_format = '#,##0.00'
+        if self.config.excel_include_formulas:
+            last_row = len(grouped) + 2
+            total_row = last_row + 1
+            ws[f'A{total_row}'] = "TOTAL"
+            ws[f'A{total_row}'].font = Font(bold=True)
+            ws[f'B{total_row}'] = f"=SUM(B3:B{last_row})"
+            ws[f'B{total_row}'].font = Font(bold=True)
+            ws[f'B{total_row}'].number_format = '#,##0.00'
+            ws[f'C{total_row}'] = f"=SUM(C3:C{last_row})"
+            ws[f'C{total_row}'].font = Font(bold=True)
+            ws[f'D{total_row}'] = f"=AVERAGE(D3:D{last_row})"
+            ws[f'D{total_row}'].font = Font(bold=True)
+            ws[f'D{total_row}'].number_format = '#,##0.00'
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+    
+    def _create_daily_breakdown_sheet(self, wb, transactions):
+        """Create daily breakdown sheet."""
+        ws = wb.create_sheet("Daily Breakdown")
+        df = pd.DataFrame(transactions)
+        df['transaction_date'] = pd.to_datetime(df['transaction_date'])
+        daily = df.groupby(df['transaction_date'].dt.date).agg({'amount': 'sum', 'transaction_id': 'count'}).round(2)
+        daily.columns = ['Total Amount', 'Transaction Count']
+        daily = daily.reset_index()
+        daily.columns = ['Date', 'Total Amount', 'Transaction Count']
+        self._write_dataframe_to_sheet(ws, daily, "Daily Breakdown")
+    
+    def _create_monthly_overview_sheet(self, wb, tx_result, acc_result, year, month):
+        """Create monthly overview sheet."""
+        ws = wb.create_sheet("Overview", 0)
+        month_name = date(year, month, 1).strftime("%B %Y")
+        ws['A1'] = f"Monthly Report - {month_name}"
+        ws['A1'].font = Font(size=18, bold=True, color="1F4E78")
+        ws.merge_cells('A1:D1')
+        row = 3
+        ws[f'A{row}'] = "Transaction Summary"
+        ws[f'A{row}'].font = Font(size=14, bold=True, color="1F4E78")
+        summary = tx_result.get('summary', {})
+        metrics = [("Total Income", summary.get('total_income', 0), "00B050"), ("Total Expense", summary.get('total_expense', 0), "C00000"), ("Net Amount", summary.get('net_amount', 0), "0070C0"), ("Transaction Count", summary.get('transaction_count', 0), "808080")]
+        for metric_name, value, color in metrics:
+            row += 1
+            ws[f'A{row}'] = metric_name
+            ws[f'B{row}'] = value
+            ws[f'B{row}'].font = Font(bold=True, color=color)
+            if metric_name != "Transaction Count":
+                ws[f'B{row}'].number_format = '#,##0.00'
+        row += 2
+        ws[f'A{row}'] = "Account Summary"
+        ws[f'A{row}'].font = Font(size=14, bold=True, color="1F4E78")
+        acc_summary = acc_result.get('summary', {})
+        row += 1
+        ws[f'A{row}'] = "Total Balance"
+        ws[f'B{row}'] = acc_summary.get('total_balance', 0)
+        ws[f'B{row}'].font = Font(bold=True, color="0070C0")
+        ws[f'B{row}'].number_format = '#,##0.00'
+        row += 1
+        ws[f'A{row}'] = "Active Accounts"
+        ws[f'B{row}'] = acc_summary.get('active_accounts', 0)
+        ws.column_dimensions['A'].width = 25
+        ws.column_dimensions['B'].width = 20
+    
+    def _add_excel_charts(self, wb):
+        """Add charts to summary sheet."""
+        if 'By Category' not in wb.sheetnames or 'Summary' not in wb.sheetnames:
+            return
+        category_ws = wb['By Category']
+        summary_ws = wb['Summary']
+        max_row = category_ws.max_row
+        if max_row < 3:
+            return
+        pie = PieChart()
+        pie.title = "Spending by Category"
+        pie.style = 10
+        pie.height = 10
+        pie.width = 15
+        labels = Reference(category_ws, min_col=1, min_row=3, max_row=max_row)
+        data = Reference(category_ws, min_col=2, min_row=2, max_row=max_row)
+        pie.add_data(data, titles_from_data=True)
+        pie.set_categories(labels)
+        summary_ws.add_chart(pie, "D3")
+        bar = BarChart()
+        bar.title = "Category Comparison"
+        bar.style = 10
+        bar.height = 10
+        bar.width = 15
+        bar.add_data(data, titles_from_data=True)
+        bar.set_categories(labels)
+        summary_ws.add_chart(bar, "D20")
+    
+    def _add_monthly_report_charts(self, wb, transactions):
+        """Add charts to monthly report."""
+        if 'Overview' not in wb.sheetnames:
+            return
+        overview_ws = wb['Overview']
+        if 'Daily Breakdown' in wb.sheetnames:
+            daily_ws = wb['Daily Breakdown']
+            max_row = daily_ws.max_row
+            if max_row > 2:
+                chart = BarChart()
+                chart.title = "Daily Spending Trend"
+                chart.style = 10
+                chart.height = 10
+                chart.width = 18
+                dates = Reference(daily_ws, min_col=1, min_row=2, max_row=max_row)
+                amounts = Reference(daily_ws, min_col=2, min_row=1, max_row=max_row)
+                chart.add_data(amounts, titles_from_data=True)
+                chart.set_categories(dates)
+                overview_ws.add_chart(chart, "D3")
+        if 'By Category' in wb.sheetnames:
+            category_ws = wb['By Category']
+            max_row = category_ws.max_row
+            if max_row > 2:
+                pie = PieChart()
+                pie.title = "Spending by Category"
+                pie.style = 10
+                pie.height = 10
+                pie.width = 15
+                labels = Reference(category_ws, min_col=1, min_row=3, max_row=max_row)
+                data = Reference(category_ws, min_col=2, min_row=2, max_row=max_row)
+                pie.add_data(data, titles_from_data=True)
+                pie.set_categories(labels)
+                overview_ws.add_chart(pie, "D20")
+    
+    def _write_dataframe_to_sheet(self, ws, df, title):
+        """Write DataFrame to sheet with formatting."""
+        ws['A1'] = title
+        ws['A1'].font = Font(size=14, bold=True, color="1F4E78")
+        ws.merge_cells(f'A1:{self._get_column_letter(len(df.columns))}1')
+        for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 2):
+            for c_idx, value in enumerate(row, 1):
+                cell = ws.cell(row=r_idx, column=c_idx, value=value)
+                if r_idx == 2:
+                    cell.font = Font(bold=True, color="FFFFFF")
+                    cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+                    cell.alignment = Alignment(horizontal="center")
+                elif isinstance(value, (int, float)) and c_idx > 1:
+                    cell.number_format = '#,##0.00'
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+    
+    def _add_account_summary_section(self, ws, summary, start_row):
+        """Add account summary section to sheet."""
+        ws[f'A{start_row}'] = "Summary Statistics"
+        ws[f'A{start_row}'].font = Font(size=12, bold=True, color="1F4E78")
+        metrics = [("Total Balance", summary.get('total_balance', 0)), ("Active Accounts", summary.get('active_accounts', 0)), ("Negative Accounts", summary.get('negative_accounts', 0))]
+        row = start_row + 1
+        for metric_name, value in metrics:
+            ws[f'A{row}'] = metric_name
+            ws[f'A{row}'].font = Font(bold=True)
+            ws[f'B{row}'] = value
+            if metric_name == "Total Balance":
+                ws[f'B{row}'].number_format = '#,##0.00'
+            row += 1
+    
+    def _get_column_letter(self, col_idx):
+        """Convert column index to Excel column letter."""
+        result = ""
+        while col_idx > 0:
+            col_idx, remainder = divmod(col_idx - 1, 26)
+            result = chr(65 + remainder) + result
+        return result
