@@ -1221,3 +1221,138 @@ class ExportService:
         ))
         
         return story
+
+    def _create_pdf_summary_section(
+        self,
+        result: Dict[str, Any],
+        styles
+    ) -> List:
+        """Create PDF summary section."""
+        story = []
+        
+        story.append(Paragraph("Summary Statistics", styles['Heading2']))
+        story.append(Spacer(1, 0.2*inch))
+        
+        summary = result['summary']
+        summary_data = [
+            ['Metric', 'Amount'],
+            ['Total Income', f"{summary['total_income']:.2f}"],
+            ['Total Expense', f"{summary['total_expense']:.2f}"],
+            ['Total Transfers', f"{summary['total_transfers']:.2f}"],
+            ['Net Amount', f"{summary['net_amount']:.2f}"]
+        ]
+        
+        summary_table = Table(summary_data, colWidths=[3*inch, 2*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        story.append(summary_table)
+        
+        return story
+    
+    def _create_pdf_transaction_table(
+        self,
+        transactions: List[Dict[str, Any]],
+        styles
+    ) -> List:
+        """Create PDF transaction table."""
+        story = []
+        
+        story.append(Paragraph("Transaction Details", styles['Heading2']))
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Limit to first 1000 for PDF performance
+        if len(transactions) > 1000:
+            transactions = transactions[:1000]
+            story.append(Paragraph(
+                f"<i>Note: Showing first 1000 of {len(transactions)} transactions</i>",
+                styles['Normal']
+            ))
+            story.append(Spacer(1, 0.1*inch))
+        
+        # Create table data
+        data = [['Date', 'Title', 'Category', 'Amount', 'Type']]
+        
+        for tx in transactions:
+            data.append([
+                str(tx['transaction_date'])[:10],
+                str(tx['title'])[:25],
+                str(tx.get('category_name', 'N/A'))[:20],
+                f"{float(tx['amount']):.2f}",
+                str(tx['transaction_type'])[:10]
+            ])
+        
+        # Create table
+        table = Table(data, colWidths=[1*inch, 2*inch, 1.5*inch, 1*inch, 1*inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('ALIGN', (3, 1), (3, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey])
+        ]))
+        story.append(table)
+        
+        return story
+
+    def _create_pdf_grouped_table(
+        self,
+        transactions: List[Dict[str, Any]],
+        group_by: str,
+        styles
+    ) -> List:
+        """Create PDF grouped transaction table."""
+        story = []
+        
+        # Convert to DataFrame for grouping
+        df = pd.DataFrame(transactions)
+        grouped_df = self._apply_grouping(df, group_by)
+        
+        story.append(Paragraph(f"Transactions Grouped by {group_by.title()}", styles['Heading2']))
+        story.append(Spacer(1, 0.2*inch))
+        
+        # Create table data from grouped DataFrame
+        data = [list(grouped_df.columns)]
+        
+        data.extend(
+            [[str(val)for val in row] for row in grouped_df.values.tolist()]
+        )
+        
+        # Create table
+        col_count = len(data[0])
+        col_width = 6.5 * inch / col_count
+        
+        table = Table(data, colWidths=[col_width] * col_count)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey])
+        ]))
+        story.append(table)
+        
+        return story
+
+    # ================================================================
+    # EXCEL HELPER METHODS
+    # ================================================================
+    
+    def _create_transactions_sheet(self, wb, transactions):
+        
