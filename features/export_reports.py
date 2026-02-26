@@ -15,6 +15,7 @@ Exports are saved to: /reports/exports/
 """
 
 from __future__ import annotations
+from turtle import st
 from typing import Optional, Dict, Any, List, Tuple, Union
 from datetime import datetime, date, timedelta
 from decimal import Decimal
@@ -44,6 +45,7 @@ try:
     from openpyxl.utils.dataframe import dataframe_to_rows
     from openpyxl.worksheet.table import Table as ExcelTable, TableStyleInfo
     EXCEL_AVAILABLE = True
+    from openpyxl.utils import get_column_letter
 except ImportError:
     EXCEL_AVAILABLE = False
 
@@ -285,7 +287,7 @@ class ExportService:
                 'owned_by_username', 'created_at', 'updated_at'
             ]
             columns = [col for col in columns if col in df.columns]
-            df = df[columns]
+            df = df[columns].astype(str)
             
             # Generate filename
             if not filename:
@@ -349,7 +351,7 @@ class ExportService:
                 'is_global', 'owned_by_username', 'created_at'
             ]
             columns = [col for col in columns if col in df.columns]
-            df = df[columns]
+            df = df[columns].astype(str)
             
             # Generate filename
             if not filename:
@@ -749,7 +751,7 @@ class ExportService:
                 'currency', 'is_active', 'description', 'created_at'
             ]
             columns = [col for col in columns if col in df.columns]
-            df = df[columns]
+            df = df[columns].astype(str)
             
             # Write data with formatting
             self._write_dataframe_to_sheet(ws, df, "Account List")
@@ -1445,15 +1447,14 @@ class ExportService:
             ws[f'D{total_row}'].number_format = '#,##0.00'
         for column in ws.columns:
             max_length = 0
-            column_letter = column[0].column_letter
+            column_letter = get_column_letter(column[0].column)
+
             for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[column_letter].width = adjusted_width
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+
+        adjusted_width = min(max_length + 2, 50)
+        ws.column_dimensions[column_letter].width = adjusted_width
     
     def _create_daily_breakdown_sheet(self, wb, transactions):
         """Create daily breakdown sheet."""
@@ -1576,15 +1577,16 @@ class ExportService:
                     cell.alignment = Alignment(horizontal="center")
                 elif isinstance(value, (int, float)) and c_idx > 1:
                     cell.number_format = '#,##0.00'
+       
+
         for column in ws.columns:
             max_length = 0
-            column_letter = column[0].column_letter
+            column_letter = get_column_letter(column[0].column)
+
             for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+
             adjusted_width = min(max_length + 2, 50)
             ws.column_dimensions[column_letter].width = adjusted_width
     
