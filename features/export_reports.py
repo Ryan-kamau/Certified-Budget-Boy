@@ -20,6 +20,7 @@ from typing import Optional, Dict, Any, List, Tuple, Union
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 from pathlib import Path
+import re
 import os
 import pandas as pd
 from dataclasses import dataclass, asdict
@@ -92,7 +93,7 @@ class ExportConfig:
     excel_include_formulas: bool = True
     excel_sheet_name: str = "Data"
     include_summary: bool = True
-    include_charts: bool = False  # Future: add chart generation
+    include_charts: bool = True  # Future: add chart generation
     filename_prefix: str = ""
     
 
@@ -216,11 +217,8 @@ class ExportService:
             # Keep only columns that exist
             columns = [col for col in columns if col in df.columns]
             df = df[columns]
+            df.columns = df.columns.astype(str)
             
-            # Apply grouping if requested
-            if group_by:
-                df = self._apply_grouping(df, group_by)
-
             # Apply grouping if requested
             if group_by:
                 df = self._apply_grouping(df, group_by)
@@ -287,7 +285,8 @@ class ExportService:
                 'owned_by_username', 'created_at', 'updated_at'
             ]
             columns = [col for col in columns if col in df.columns]
-            df = df[columns].astype(str)
+            df = df[columns]
+            df.columns = df.columns.astype(str)
             
             # Generate filename
             if not filename:
@@ -351,7 +350,8 @@ class ExportService:
                 'is_global', 'owned_by_username', 'created_at'
             ]
             columns = [col for col in columns if col in df.columns]
-            df = df[columns].astype(str)
+            df = df[columns]
+            df.columns = df.columns.astype(str)
             
             # Generate filename
             if not filename:
@@ -612,7 +612,7 @@ class ExportService:
         except Exception as e:
             raise ExportError(f"Account PDF export failed: {str(e)}")
 
-        # ================================================================
+    # ================================================================
     # EXCEL EXPORTS
     # ================================================================
     
@@ -751,7 +751,8 @@ class ExportService:
                 'currency', 'is_active', 'description', 'created_at'
             ]
             columns = [col for col in columns if col in df.columns]
-            df = df[columns].astype(str)
+            df = df[columns]
+            df.columns = df.columns.astype(str)
             
             # Write data with formatting
             self._write_dataframe_to_sheet(ws, df, "Account List")
@@ -948,10 +949,8 @@ class ExportService:
         """
         try:
             # Calculate date range from ISO week
-            jan_4 = date(year, 1, 4)
-            week_1_monday = jan_4 - timedelta(days=jan_4.weekday())
-            start_date = week_1_monday + timedelta(weeks=week - 1)
-            end_date = start_date + timedelta(days=6)
+            start_date = date.fromisocalendar(year, week, 1)  # Monday
+            end_date = date.fromisocalendar(year, week, 7)    # Sunday
             
             # Create filters
             filters = TransactionSearchRequest(
@@ -1152,7 +1151,7 @@ class ExportService:
     ) -> str:
         """Generate descriptive filename for export."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        username = self.username.replace(" ", "_").lower()
+        username = re.sub(r'[^\w\-]', '_', self.username).lower()
         
         parts = [self.config.filename_prefix] if self.config.filename_prefix else []
         parts.append(prefix)
@@ -1272,10 +1271,11 @@ class ExportService:
         story.append(Spacer(1, 0.2*inch))
         
         # Limit to first 1000 for PDF performance
-        if len(transactions) > 1000:
+        original_count = len(transactions)
+        if original_count > 1000:
             transactions = transactions[:1000]
             story.append(Paragraph(
-                f"<i>Note: Showing first 1000 of {len(transactions)} transactions</i>",
+                f"<i>Note: Showing first 1000 of {original_count} transactions</i>",
                 styles['Normal']
             ))
             story.append(Spacer(1, 0.1*inch))
@@ -1360,13 +1360,25 @@ class ExportService:
         """Create formatted transactions sheet."""
         ws = wb.create_sheet("Transactions")
         df = pd.DataFrame(transactions)
-        columns = ['transaction_id', 'transaction_date', 'title', 'amount', 'transaction_type', 'payment_method', 'category_name', 'account_name', 'description']
+        columns = ['transaction_id', 'transaction_date', 'title', 'amount', 'transaction_type',
+                'payment_method', 'category_name', 'account_name', 'description']
         columns = [col for col in columns if col in df.columns]
         df = df[columns]
+        df.columns = df.columns.astype(str)
         self._write_dataframe_to_sheet(ws, df, "Transaction Details")
         if len(df) > 0:
-            table = ExcelTable(displayName="TransactionsTable", ref=f"A1:{self._get_column_letter(len(columns))}{len(df) + 1}")
-            style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False, showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+            # Table starts at row 2 (headers), not row 1 (title)
+            table = ExcelTable(
+                displayName="TransactionsTable",
+                ref=f"A2:{self._get_column_letter(len(columns))}{len(df) + 2}"
+            )
+            style = TableStyleInfo(
+                name="TableStyleMedium9",
+                showFirstColumn=False,
+                showLastColumn=False,
+                showRowStripes=True,
+                showColumnStripes=False
+            )
             table.tableStyleInfo = style
             ws.add_table(table)
 
@@ -1418,8 +1430,10 @@ class ExportService:
             return
         grouped = df.groupby('category_name').agg({'amount': ['sum', 'count', 'mean', 'min', 'max']}).round(2)
         grouped.columns = ['Total', 'Count', 'Average', 'Min', 'Max']
+        grouped.columns = grouped.columns.astype(str)
         grouped = grouped.reset_index()
         grouped.columns = ['Category', 'Total Amount', 'Count', 'Average', 'Min', 'Max']
+        grouped.columns = grouped.columns.astype(str)
         ws['A1'] = "Category Breakdown"
         ws['A1'].font = Font(size=14, bold=True, color="1F4E78")
         ws.merge_cells('A1:F1')
@@ -1453,8 +1467,8 @@ class ExportService:
                 if cell.value:
                     max_length = max(max_length, len(str(cell.value)))
 
-        adjusted_width = min(max_length + 2, 50)
-        ws.column_dimensions[column_letter].width = adjusted_width
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
     
     def _create_daily_breakdown_sheet(self, wb, transactions):
         """Create daily breakdown sheet."""
@@ -1565,6 +1579,7 @@ class ExportService:
     
     def _write_dataframe_to_sheet(self, ws, df, title):
         """Write DataFrame to sheet with formatting."""
+        df.columns = df.columns.astype(str)
         ws['A1'] = title
         ws['A1'].font = Font(size=14, bold=True, color="1F4E78")
         ws.merge_cells(f'A1:{self._get_column_letter(len(df.columns))}1')
