@@ -228,13 +228,13 @@ class TransactionModel:
         source_acc = tx_data.get("source_account_id")
         dest_acc = tx_data.get("destination_account_id")
         
-        if trans_type in ["income", "expense", "debt_borrowed", "debt_repaid"]:
+        if trans_type in {"income", "expense", "debt_borrowed", "debt_repaid"}:
             if not tx_data.get("account_id"):
                 raise TransactionValidationError(
                     f"{trans_type} transaction requires 'account_id'"
                 )
         
-        elif trans_type in ["transfer", "investment_deposit", "investment_withdrawal"]:
+        elif trans_type in {"transfer", "investment_deposit", "investment_withdrawal"}:
             if not source_acc:
                 raise TransactionValidationError(
                     f"{trans_type} transaction requires 'source_account_id'"
@@ -677,7 +677,7 @@ class TransactionModel:
             params.append(transaction_type) 
 
         if payment_method:
-            if payment_method not in ['cash','bank','mobile_money','credit_card','other']:
+            if payment_method not in {'cash','bank','mobile_money','credit_card','other'}:
                 raise TransactionValidationError(f"Payment Method Not Found ...Use: {'income', 'expense', 'transfer', 'debt_repaid', 'debt_borrowed', 'investment_deposit', 'investment_withdraw'} ")
             
             query += " AND payment_method = %s"
@@ -734,9 +734,9 @@ class TransactionModel:
         tx_trans_type = tx["transaction_type"]
 
         if soft:
-            self._execute("UPDATE transactions SET is_deleted = 1 WHERE transaction_id = %s AND user_id = %s", (transaction_id, user_id,))
+            self._execute("UPDATE transactions SET is_deleted = 1 WHERE transaction_id = %s AND user_id = %s", (transaction_id, self.user_id,))
         else:
-            self._execute("DELETE FROM transactions WHERE transaction_id = %s AND user_id = %s", (transaction_id, user_id,))
+            self._execute("DELETE FROM transactions WHERE transaction_id = %s AND user_id = %s", (transaction_id, self.user_id,))
 
         if recursive:
             children = self._get_children_recursive(transaction_id, include_deleted=True)
