@@ -349,7 +349,7 @@ def main():
                         payment_methods=payment_methods
                     ),
                     sort=SortOptions(sort_by=sort_by, sort_order=sort_order),
-                    pagination=Pagination(page_size=20)
+                    pagination=Pagination(page_size=50)
                 )
                 
                 result = search_service.search_transactions(filters)
@@ -359,6 +359,8 @@ def main():
                 for key, value in result['filters_applied'].items():
                     if value:
                         print(f"   {key}: {value}")
+
+                print("count:", result['count'])
                 
                 print("\n📊 Summary:")
                 for key, value in result['summary'].items():
@@ -366,7 +368,7 @@ def main():
                 
                 print("\n💰 Results:")
                 print("-" * 60)
-                for tx in result['results'][:10]:
+                for tx in result['results']:
                     print(f"\n{tx['transaction_date']} | {tx['title']}")
                     print(f"   Transaction_id: {tx['transaction_id']}")
                     print(f"   Amount: {tx['amount']:.2f} | Type: {tx['transaction_type']}")

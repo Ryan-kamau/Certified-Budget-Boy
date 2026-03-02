@@ -112,7 +112,7 @@ class TransactionSearchRequest:
     tx_type: TransactionTypeFilter = field(default_factory=TransactionTypeFilter)
     status: StatusFilter = field(default_factory=StatusFilter)
     sort: SortOptions = field(default_factory=lambda: SortOptions(sort_by="transaction_date", sort_order="DESC"))
-    pagination: Pagination = field(default_factory=lambda: Pagination(page_size=50))
+    pagination: Pagination = field(default_factory=lambda: Pagination(page_size=100))
     parent: ParentFilter = field(default_factory=ParentFilter)
 
 @dataclass

@@ -42,7 +42,7 @@ except ImportError:
 try:
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
-    from openpyxl.chart import PieChart, BarChart, Reference
+    from openpyxl.chart import PieChart, BarChart, LineChart, Reference
     from openpyxl.utils.dataframe import dataframe_to_rows
     from openpyxl.worksheet.table import Table as ExcelTable, TableStyleInfo
     EXCEL_AVAILABLE = True
@@ -842,7 +842,7 @@ class ExportService:
             
             # Generate filename
             if not filename:
-                filename = f"monthly_report_{year}_{month:02d}.xlsx"
+                filename = self._resolve_filepath(f"monthly_report_{year}_{month:02d}.xlsx")
             
             filepath = os.path.join(self.config.output_dir, filename)
             
@@ -1190,8 +1190,18 @@ class ExportService:
             parts.append(f"by_{group_by}")
         
         parts.append(timestamp)
-        
-        filename = "_".join(filter(None, parts)) + f".{extension}"
+        base_name = "_".join(filter(None, parts))
+        filename = f"{base_name}.{extension}"
+        filepath = os.path.join(self.config.output_dir, filename)
+        if os.path.exists(filepath):
+            counter = 1
+            while True:
+                filename = f"{base_name}_{counter}.{extension}"
+                filepath = os.path.join(self.config.output_dir, filename)
+                if not os.path.exists(filepath):
+                    break
+                counter += 1
+
         return filename
     
     def _create_metadata(
@@ -1217,6 +1227,18 @@ class ExportService:
             filters_applied=filters,
             file_size_bytes=file_size
         )
+
+    # Add this private helper anywhere in the class
+    def _resolve_filepath(self, filename: str) -> str:
+        """If filename already exists, append (n) before the extension."""
+        base, ext = os.path.splitext(filename)
+        filepath = os.path.join(self.config.output_dir, filename)
+        counter = 1
+        while os.path.exists(filepath):
+            filename = f"{base}({counter}){ext}"
+            filepath = os.path.join(self.config.output_dir, filename)
+            counter += 1
+        return filename
     
     def _create_pdf_metadata_section(
         self,
