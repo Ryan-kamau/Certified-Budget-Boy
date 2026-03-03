@@ -754,7 +754,7 @@ if __name__ == "__main__":
     
     try:
         main()
-    except KeyboardInterrupt:
+    except KeyboardInterrupt:          
         print("\n\n👋 Goodbye!")
     except Exception as e:
         print(f"\n❌ Fatal error: {e}")
