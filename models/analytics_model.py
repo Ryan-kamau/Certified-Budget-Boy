@@ -320,7 +320,8 @@ class AnalyticsModel:
         global_view: bool = False,
     ) -> List[Dict[str, Any]]:
         """
-        Return income and expense totals grouped by time period.
+        Return income, expense and debt_borrowed, debt_repaid, investment_deposit and
+         investment_withdrawal totals grouped by time period.
 
         Parameters
         ----------
@@ -333,6 +334,10 @@ class AnalyticsModel:
                 "period":        str,    # e.g. '2024-03' for monthly
                 "total_income":  float,
                 "total_expenses":float,
+                "total_debt_in": float,
+                "total_debt_out":float,
+                "total_investment_deposit": float,
+                "total_investment_withdrawal": float,
                 "net":           float
             },
             ...
@@ -358,10 +363,15 @@ class AnalyticsModel:
             SELECT
                 {period_expr} AS period_label,
                 COALESCE(SUM(CASE WHEN t.transaction_type = 'income'  THEN t.amount ELSE 0 END), 0) AS total_income,
-                COALESCE(SUM(CASE WHEN t.transaction_type = 'expense' THEN t.amount ELSE 0 END), 0) AS total_expenses
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'expense' THEN t.amount ELSE 0 END), 0) AS total_expenses,
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'debt_borrowed' THEN t.amount ELSE 0 END), 0) AS total_debt_in,
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'debt_repaid' THEN t.amount ELSE 0 END), 0) AS total_debt_out,
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'investment_deposit' THEN t.amount ELSE 0 END), 0) AS total_investment_deposit,
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'investment_withdraw' THEN t.amount ELSE 0 END), 0) AS total_investment_withdrawal
             FROM transactions t
             WHERE t.is_deleted = 0
-              AND t.transaction_type IN ('income', 'expense')
+              AND t.transaction_type IN ('income', 'expense', 
+              'debt_borrowed', 'debt_repaid', 'investment_deposit', 'investment_withdraw')
               AND {tenant}
         """
         params: List[Any] = []
@@ -383,11 +393,19 @@ class AnalyticsModel:
         for row in rows:
             income   = self._decimal_to_float(row["total_income"])
             expenses = self._decimal_to_float(row["total_expenses"])
+            debt_in  = self._decimal_to_float(row["total_debt_in"])
+            debt_out = self._decimal_to_float(row["total_debt_out"])
+            invest_deposit = self._decimal_to_float(row["total_investment_deposit"])
+            invest_withdraw = self._decimal_to_float(row["total_investment_withdrawal"])
             result.append({
                 "period":         row["period_label"],
                 "total_income":   round(income, 2),
                 "total_expenses": round(expenses, 2),
-                "net":            round(income - expenses, 2),
+                "total_debt_in":  round(debt_in, 2),
+                "total_debt_out": round(debt_out, 2),
+                "total_investment_deposit": round(invest_deposit, 2),
+                "total_investment_withdrawal": round(invest_withdraw, 2),
+                "net":            round(income - expenses - debt_out + debt_in + invest_withdraw - invest_deposit, 2),
             })
         return result
 
@@ -477,7 +495,7 @@ class AnalyticsModel:
     ) -> List[Dict[str, Any]]:
         """
         Return a 12-row breakdown (Jan–Dec) for a given year,
-        showing income, expenses, and net for each month.
+        showing income, expenses, debt_borrowed, debt_repaid, investment_deposit, investment_withdrawal, and net for each month.
 
         Returns
         -------
@@ -487,6 +505,10 @@ class AnalyticsModel:
                 "month_label":    str,    # 'Jan', 'Feb', …
                 "total_income":   float,
                 "total_expenses": float,
+                "total_debt_in":  float,
+                "total_debt_out": float,
+                "total_investment_deposit": float,
+                "total_investment_withdrawal": float,
                 "net":            float
             },
             ...
@@ -502,11 +524,16 @@ class AnalyticsModel:
                 MONTH(t.transaction_date)  AS month_num,
                 DATE_FORMAT(t.transaction_date, '%b') AS month_label,
                 COALESCE(SUM(CASE WHEN t.transaction_type = 'income'  THEN t.amount ELSE 0 END), 0) AS total_income,
-                COALESCE(SUM(CASE WHEN t.transaction_type = 'expense' THEN t.amount ELSE 0 END), 0) AS total_expenses
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'expense' THEN t.amount ELSE 0 END), 0) AS total_expenses,
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'debt_borrowed' THEN t.amount ELSE 0 END), 0) AS total_debt_in,
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'debt_repaid' THEN t.amount ELSE 0 END), 0) AS total_debt_out,
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'investment_deposit' THEN t.amount ELSE 0 END), 0) AS total_investment_deposit,
+                COALESCE(SUM(CASE WHEN t.transaction_type = 'investment_withdraw' THEN t.amount ELSE 0 END), 0) AS total_investment_withdrawal
             FROM transactions t
             WHERE t.is_deleted = 0
               AND YEAR(t.transaction_date) = %s
-              AND t.transaction_type IN ('income', 'expense')
+              AND t.transaction_type IN ('income', 'expense', 
+              'debt_borrowed', 'debt_repaid', 'investment_deposit', 'investment_withdraw')
               AND {tenant}
             GROUP BY month_num, month_label
             ORDER BY month_num ASC
@@ -528,11 +555,19 @@ class AnalyticsModel:
             row = row_map.get(m, {})
             income   = self._decimal_to_float(row.get("total_income"))
             expenses = self._decimal_to_float(row.get("total_expenses"))
+            debt_in  = self._decimal_to_float(row.get("total_debt_in"))
+            debt_out = self._decimal_to_float(row.get("total_debt_out"))
+            invest_deposit = self._decimal_to_float(row.get("total_investment_deposit"))
+            invest_withdraw = self._decimal_to_float(row.get("total_investment_withdrawal"))
             result.append({
                 "month":          m,
                 "month_label":    MONTH_LABELS[m - 1],
                 "total_income":   round(income, 2),
                 "total_expenses": round(expenses, 2),
+                "total_debt_in":  round(debt_in, 2),
+                "total_debt_out": round(debt_out, 2),
+                "total_investment_deposit": round(invest_deposit, 2),
+                "total_investment_withdrawal": round(invest_withdraw, 2),
                 "net":            round(income - expenses, 2),
             })
         return result
