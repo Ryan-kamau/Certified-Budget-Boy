@@ -85,10 +85,13 @@ class TransactionModel:
             with self.conn.cursor(dictionary=True) as cursor:
                 if many:
                     cursor.executemany(query, params)
+                    self.conn.commit()
                 else:
                     cursor.execute(query, params)
+                    self.conn.commit()
                 if fetch:
                     rows = cursor.fetchall()
+                    self.conn.commit()
                     return rows
                 else:
                     self.conn.commit()
@@ -204,7 +207,7 @@ class TransactionModel:
             self.category_mod.assert_category_access(category_id)
     
     def _assert_parent_transaction_exists(self, parent_id: int):
-        row = self._fetchone(
+        row = self._execute(
             """
             SELECT 1 FROM transactions
             WHERE transaction_id = %s

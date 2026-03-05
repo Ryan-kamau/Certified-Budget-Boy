@@ -161,7 +161,7 @@ def main():
 
                 tx_type     = input("\nTransaction type (default expense): ").strip() or "expense"
                 limit_raw   = input("How many categories? (default 10): ").strip()
-                limit       = int(limit_raw) if limit_raw else 10
+                limit       = int(limit_raw) if limit_raw else 50
                 start_date  = _ask_date("Start date (YYYY-MM-DD, blank for all time): ")
                 end_date    = _ask_date("End date   (YYYY-MM-DD, blank for all time): ")
                 global_view = _ask_global_view(role)
