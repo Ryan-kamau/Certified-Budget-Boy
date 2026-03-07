@@ -83,30 +83,29 @@ class TransactionModel:
         """Internal DB executor with error handling."""
         try:
             with self.conn.cursor(dictionary=True) as cursor:
+
                 if many:
                     cursor.executemany(query, params)
-                    self.conn.commit()
                 else:
                     cursor.execute(query, params)
-                    self.conn.commit()
+
                 if fetch:
-                    rows = cursor.fetchall()
-                    self.conn.commit()
-                    return rows
-                else:
-                    self.conn.commit()
-                    if query.strip().upper().startswith("UPDATE"):
-                        affected = cursor.rowcount
-                        return affected
-                    affected = cursor.lastrowid
-                    return affected
+                    return cursor.fetchall()
+
+                # commit only for write queries
+                self.conn.commit()
+
+                if query.strip().upper().startswith("UPDATE"):
+                    return cursor.rowcount
+
+                return cursor.lastrowid
+
         except mysql.connector.Error as err:
             try:
                 self.conn.rollback()
             except Exception:
                 pass
             raise DatabaseError(f"Database error: {err}")
-        
     # Tenant Filter & Audit Logging
 
     def _tenant_filter(self, alias: str = "t", global_view: bool = False) -> str:
@@ -214,7 +213,7 @@ class TransactionModel:
             AND user_id = %s
             AND is_deleted = 0
             """,
-            (parent_id, self.user_id)
+            (parent_id, self.user_id), fetch=True
         )
         if not row:
             raise TransactionValidationError("Invalid parent_transaction_id")
@@ -463,7 +462,9 @@ class TransactionModel:
 
         tx = self._build_transaction(rows[0])
         if include_children:
-            tx.children = self._get_children_recursive(tx.transaction_id, include_deleted)
+            tx.children = self._get_children_recursive(tx.transaction_id, 
+                                                       include_deleted = include_deleted,
+                                                        global_view = global_view)
 
         result = tx.to_dict()
         result["category_name"] = rows[0].get("category_name")
