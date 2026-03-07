@@ -388,7 +388,6 @@ class FinanceCharts:
             y=y_start - 0.025,
             xmin=0, xmax=1,
             color="#3a3d4d", linewidth=0.8,
-            transform=ax_legend.transAxes,
         )
 
         for i, row in enumerate(display):
@@ -515,7 +514,6 @@ class FinanceCharts:
             cmap=cmap,
             vmin=0,
             vmax=vmax,
-            linewidth=1, edgecolor="#1a1d27",
             interpolation="nearest",
         )
 
