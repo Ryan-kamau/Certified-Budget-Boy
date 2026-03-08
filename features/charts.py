@@ -495,7 +495,7 @@ class FinanceCharts:
         # Colour map: dark bg → pale yellow → deep red
         cmap = mcolors.LinearSegmentedColormap.from_list(
             "github_green",
-            ["#161b22", "#0e4429", "#006d32", "#26a641", "#39d353"],
+            ["#080908F6", "#0e6634", "#006d32", "#26a641", "#39d353", "#e38513", "#e74c3c"],
         )
         cmap.set_bad(color="#0f1117")   # masked cells
 
@@ -575,6 +575,52 @@ class FinanceCharts:
         ax.tick_params(length=0)
         for spine in ax.spines.values():
             spine.set_visible(False)
+
+        # ── Hover tooltip ─────────────────────────────────────────────────
+        annot = ax.annotate(
+            "", xy=(0, 0),
+            xytext=(12, 12), textcoords="offset points",
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="#1e2130",
+                      edgecolor="#39d353", alpha=0.95),
+            fontsize=8.5, color="#d0d3e0",
+            visible=False,
+        )
+
+        def _on_hover(event):
+            if event.inaxes != ax:
+                annot.set_visible(False)
+                fig.canvas.draw_idle()
+                return
+
+            col = int(round(event.xdata)) if event.xdata is not None else -1
+            row = int(round(event.ydata)) if event.ydata is not None else -1
+
+            if (row, col) in day_grid:
+                d      = day_grid[(row, col)]
+                amount = grid[row, col]
+                label  = (
+                    f"{d.strftime('%A, %d %b %Y')}\n"
+                    f"Spent: {self._c(amount)}"
+                    if amount > 0 else
+                    f"{d.strftime('%A, %d %b %Y')}\nNo spending"
+                )
+                annot.set_text(label)
+                annot.xy = (col, row)
+                annot.set_visible(True)
+            else:
+                annot.set_visible(False)
+
+            fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect("motion_notify_event", _on_hover)
+        # ──────────────────────────────────────────────────────────────────
+
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
+        _add_watermark(fig)
+        plt.show()
+
+
+
 
         fig.tight_layout(rect=[0, 0, 1, 0.93])
         _add_watermark(fig)
