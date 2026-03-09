@@ -279,7 +279,7 @@ class FinanceCharts:
     def category_donut(
         self,
         transaction_type: str = "expense",
-        top_n: int = 9,
+        top_n: int = 20,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
     ) -> None:

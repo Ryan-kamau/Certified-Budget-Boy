@@ -155,7 +155,7 @@ class BalanceService:
         new_balance = old_balance + amount
         
         # Update account balance
-        self.account_model.update_account(account_id, source=source, balance=new_balance)
+        self._update_account_balance(account_id, new_balance=new_balance)
         
         # Log the change
         self._log_balance_change(
@@ -186,7 +186,7 @@ class BalanceService:
         new_balance = old_balance - amount
         
         # Update account balance
-        self.account_model.update_account(account_id, source=source, balance=new_balance)
+        self._update_account_balance(account_id, new_balance=new_balance)
         
         # Log the change
         self._log_balance_change(
@@ -231,8 +231,8 @@ class BalanceService:
         dest_new = dest_old + amount
         
         # Update both accounts
-        self.account_model.update_account(source_account_id, source=source, balance=source_new)
-        self.account_model.update_account(dest_account_id, source=source, balance=dest_new)
+        self._update_account_balance(source_account_id, new_balance=source_new)
+        self._update_account_balance(dest_account_id, new_balance=dest_new)
         
         # Log both changes
         self._log_balance_change(
@@ -269,12 +269,23 @@ class BalanceService:
                 "change": amount
             }
         }
+    def _update_account_balance(self, account_id: int, new_balance: float) -> Dict[str, Any]:
+        #Update account balance directly
+        account = self._validate_account_active(account_id)
+        if new_balance is None:
+            raise BalanceValidationError("No amount provided for balance update")
+        query = "UPDATE accounts SET balance = %s WHERE account_id = %s AND owner_id = %s"
+        params = (new_balance, account_id, self.user_id)
+        result = self._execute(query, params)
+        if result == 0:
+            raise BalanceDatabaseError(f"Failed to update balance for account {account_id}")
+
     
     def _reverse_transaction(self, transaction_id: int, source:str, transaction_data: Dict[str, Any]) -> Dict[str, Any]:
         """Reverse a transaction's balance effects"""
         trans_type = transaction_data.get("transaction_type")
         amount = float(transaction_data["amount"])
-        account_id = transaction_data["account_id"]
+        account_id = transaction_data.get("account_id")
         credited_trans_types = {"income", "debt_borrowed"}
         debited_trans_types = {"debt_repaid", "expense"}
         transfer_types = {"transfer", "investment_deposit", "investment_withdraw"}
@@ -351,6 +362,7 @@ class BalanceService:
         
         Args:
             transaction_id: ID of the transaction
+            source: Source of reversal (e.g. "transaction_delete", "transaction_update")
             transaction_data: Original transaction data
         
         Returns:
@@ -473,7 +485,7 @@ class BalanceService:
                     calculated_balance += amount
         
         # Update account with calculated balance
-        self.account_model.update_account(account_id, source="BALANCE_REBUILD", balance=calculated_balance)
+        self._update_account_balance(account_id, new_balance=calculated_balance)
         
         # Log the rebuild
         self._log_balance_change(
@@ -482,7 +494,7 @@ class BalanceService:
             old_balance=old_balance,
             new_balance=calculated_balance,
             change_amount=calculated_balance - old_balance,
-            action="balance_rebuild",
+            action="BALANCE_REBUILD",
             notes=f"Rebuilt from {len(transactions)} transactions"
         )
         

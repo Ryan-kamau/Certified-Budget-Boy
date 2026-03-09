@@ -739,6 +739,19 @@ class TransactionModel:
         tx = self.get_transaction(transaction_id, include_deleted=True)
         tx_trans_type = tx["transaction_type"]
 
+        # ✨ NEW: Reverse balance changes when deleting
+        
+        try:
+            self.balance_service.reverse_transaction_change(
+                transaction_id=transaction_id,
+                source=f"REVERSED_{tx_trans_type}",
+                transaction_data=tx
+            )
+        except Exception as e:
+            raise TransactionValidationError(
+                f"Failed to reverse balance on delete: {str(e)}"
+            )
+        
         if soft:
             self._execute("UPDATE transactions SET is_deleted = 1 WHERE transaction_id = %s AND user_id = %s", (transaction_id, self.user_id,))
         else:
@@ -762,18 +775,6 @@ class TransactionModel:
                     self._execute("UPDATE transactions SET is_deleted= 1 WHERE transaction_id = %s", (child.transaction_id,))
                 else:
                     self._execute("DELETE FROM transactions WHERE transaction_id = %s", (child.transaction_id,))
-        # ✨ NEW: Reverse balance changes when deleting
-        
-        try:
-            self.balance_service.reverse_transaction_change(
-                transaction_id=transaction_id,
-                source=f"REVERSED_{tx_trans_type}",
-                transaction_data=tx
-            )
-        except Exception as e:
-            raise TransactionValidationError(
-                f"Failed to reverse balance on delete: {str(e)}"
-            )
         
         self._audit_log(
                 target_id=transaction_id,

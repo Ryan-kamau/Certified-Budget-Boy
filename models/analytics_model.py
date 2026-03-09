@@ -227,7 +227,7 @@ class AnalyticsModel:
     def top_categories(
         self,
         transaction_type: str = "expense",
-        limit: int = 50,
+        limit: int = 100,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         *,
