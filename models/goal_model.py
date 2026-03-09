@@ -37,6 +37,7 @@ from dataclasses import dataclass, asdict, field
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 from models.account_model import AccountModel
+from models.category_model import CategoryModel
 import json
 import mysql.connector
 
@@ -114,6 +115,7 @@ class GoalModel:
         self.conn = conn
         self.user = current_user          # {"user_id": ..., "role": ...}
         self.account_model = AccountModel(conn, current_user)  # For cross-checks
+        self.category_model = CategoryModel(conn, current_user)  # For cross-checks
     # ============================================================
     # Internal Helpers
     # ============================================================
@@ -264,8 +266,12 @@ class GoalModel:
                 f"{goal_type} goals require a category_id."
             )
         
-    def _validate
-
+    def _assert_ownership(self, account_id: int, category_id: int) -> None:
+        """Helper to check if the user owns the referenced account/category."""
+        if account_id is not None:
+            self.account_model.get_account(account_id)  # Will raise if not found or not owned
+        if category_id is not None:
+            self.category_model.assert_category_access(category_id)
     # ============================================================
     # CRUD Operations
     # ============================================================
@@ -280,27 +286,48 @@ class GoalModel:
         Returns: {"success": True, "goal_id": <int>}
         """
         self._validate_goal_data(data, require_all=True)
-
+        self._assert_ownership(data.get("account_id"), data.get("category_id"))
         sql = """
             INSERT INTO goals
                 (owner_id, name, description, goal_type, target_amount,
                  start_date, end_date, category_id, account_id,
                  status, is_global)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            SELECT
+                %s AS owner_id, %s AS name, %s AS description, %s AS goal_type, %s AS target_amount,
+                %s AS start_date, %s AS end_date, 
+                c.category_id, a.account_id,
+                %s AS status, %s AS is_global
+            FROM (SELECT 1) AS dummy
+            LEFT JOIN category c ON c.category_id = %s AND c.owner_id = %s AND c.is_deleted = 0
+            LEFT JOIN account a ON a.account_id = %s AND a.owner_id = %s AND a.is_deleted = 0
+            WHERE (%s IS NULL OR c.category_id IS NOT NULL)
+                AND (%s IS NULL OR a.account_id IS NOT NULL)
+            LIMIT 1
         """
         params = (
-            self.user["user_id"],
-            data["name"],
-            data.get("description"),
-            data["goal_type"],
-            float(data["target_amount"]),
-            data["start_date"],
-            data["end_date"],
-            data.get("category_id"),
-            data.get("account_id"),
-            data.get("status", "active"),
-            data.get("is_global", 0),
-        )
+                # SELECT values
+                self.user["user_id"],
+                data["name"],
+                data.get("description"),
+                data["goal_type"],
+                float(data["target_amount"]),
+                data["start_date"],
+                data["end_date"],
+                data.get("status", "active"),
+                data.get("is_global", 0),
+
+                # category validation
+                data.get("category_id"),
+                self.user["user_id"],
+
+                # account validation
+                data.get("account_id"),
+                self.user["user_id"],
+
+                # WHERE checks
+                data.get("category_id"),
+                data.get("account_id"),
+            )
 
         goal_id = self._execute(sql, params)
         new_record = self.get_goal(goal_id)
@@ -320,9 +347,11 @@ class GoalModel:
         """
         filter_tenant = self._tenant_filter(global_view)
         sql = f"""
-            SELECT g.*, u.username AS owner_username
+            SELECT g.*, u.username AS owner_username, c.name AS category_name, a.name AS account_name
             FROM goals g
             LEFT JOIN users u ON g.owner_id = u.user_id
+            LEFT JOIN category c ON g.category_id = c.category_id
+            LEFT JOIN account a ON g.account_id = a.account_id
             WHERE g.goal_id = %s AND {filter_tenant}
         """
         params: List[Any] = [goal_id]
@@ -338,6 +367,8 @@ class GoalModel:
 
         goal_dict  = self._build_goal(row).to_dict()
         goal_dict["owner_username"] = row.get("owner_username")
+        goal_dict["category_name"]  = row.get("category_name")
+        goal_dict["account_name"]   = row.get("account_name")   
         return goal_dict
 
     def update_goal(self, goal_id: int, **updates: Any) -> Dict[str, Any]:
@@ -359,16 +390,20 @@ class GoalModel:
         invalid = set(updates) - ALLOWED
         if invalid:
             raise GoalValidationError(f"Cannot update fields: {invalid}")
+        #merge old record with updates for validation
+        old_record = self.get_goal(goal_id)
+        merged = old_record.copy()
+        merged.update(updates)
 
         # Partial validation
-        self._validate_goal_data(updates, require_all=False)
+        self._validate_goal_data(merged, require_all=False)
+        self._assert_ownership(merged.get("account_id"), merged.get("category_id"))
 
-        old_record = self.get_goal(goal_id)
-
+ 
         set_clause = ", ".join(f"{k} = %s" for k in updates)
         params     = tuple(updates.values()) + (goal_id, self.user["user_id"])
         affected   = self._execute(
-            f"UPDATE goals SET {set_clause} WHERE goal_id = %s AND owner_id = %s",
+            f"UPDATE goals SET {set_clause} WHERE goal_id = %s AND owner_id = %s AND is_deleted = 0",
             params,
         )
 
@@ -441,9 +476,11 @@ class GoalModel:
         """
         filter_tenant = self._tenant_filter(global_view)
         sql = f"""
-            SELECT g.*, u.username AS owner_username
+            SELECT g.*, u.username AS owner_username, c.name AS category_name, a.name AS account_name
             FROM goals g
             LEFT JOIN users u ON g.owner_id = u.user_id
+            LEFT JOIN categories c ON g.category_id = c.category_id
+            LEFT JOIN accounts a ON g.account_id = a.account_id
             WHERE {filter_tenant}
         """
         params: List[Any] = []
@@ -487,6 +524,8 @@ class GoalModel:
         for row in rows:
             gd = self._build_goal(row).to_dict()
             gd["owner_username"] = row.get("owner_username")
+            gd["category_name"] = row.get("category_name")
+            gd["account_name"] = row.get("account_name")
             results.append(gd)
 
         return {"success": True, "count": len(results), "goals": results}

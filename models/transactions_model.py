@@ -343,6 +343,7 @@ class TransactionModel:
                         AND src.account_id IS NOT NULL
                         AND dst.account_id IS NOT NULL
                         AND src.account_id <> dst.account_id
+                        AND (%s IS NULL OR c.category_id IS NOT NULL)
                         AND (%s IS NULL OR ptx.transaction_id IS NOT NULL)
                         )
                     )
@@ -390,6 +391,7 @@ class TransactionModel:
 
             # WHERE (transfer/investments)
             tx_data["transaction_type"],
+            tx_data.get("category_id"),
             tx_data.get("parent_transaction_id"),
         )
         new_id = self._execute(query, params)
