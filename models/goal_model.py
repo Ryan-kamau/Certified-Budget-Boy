@@ -298,8 +298,14 @@ class GoalModel:
                 c.category_id, a.account_id,
                 %s AS status, %s AS is_global
             FROM (SELECT 1) AS dummy
-            LEFT JOIN category c ON c.category_id = %s AND c.owner_id = %s AND c.is_deleted = 0
-            LEFT JOIN account a ON a.account_id = %s AND a.owner_id = %s AND a.is_deleted = 0
+            LEFT JOIN categories c 
+                ON c.category_id = %s 
+                AND c.owner_id = %s 
+                AND c.is_deleted = 0
+            LEFT JOIN accounts a 
+                ON a.account_id = %s 
+                AND a.owner_id = %s 
+                AND a.is_deleted = 0
             WHERE (%s IS NULL OR c.category_id IS NOT NULL)
                 AND (%s IS NULL OR a.account_id IS NOT NULL)
             LIMIT 1
@@ -350,9 +356,9 @@ class GoalModel:
             SELECT g.*, u.username AS owner_username, c.name AS category_name, a.name AS account_name
             FROM goals g
             LEFT JOIN users u ON g.owner_id = u.user_id
-            LEFT JOIN category c ON g.category_id = c.category_id
-            LEFT JOIN account a ON g.account_id = a.account_id
-            WHERE g.goal_id = %s AND {filter_tenant}
+            LEFT JOIN categories c ON g.category_id = c.category_id
+            LEFT JOIN accounts a ON g.account_id = a.account_id
+            WHERE g.goal_id = %s AND g.{filter_tenant}
         """
         params: List[Any] = [goal_id]
         if "%s" in filter_tenant:
@@ -481,7 +487,7 @@ class GoalModel:
             LEFT JOIN users u ON g.owner_id = u.user_id
             LEFT JOIN categories c ON g.category_id = c.category_id
             LEFT JOIN accounts a ON g.account_id = a.account_id
-            WHERE {filter_tenant}
+            WHERE g.{filter_tenant}
         """
         params: List[Any] = []
         if "%s" in filter_tenant:
