@@ -427,9 +427,9 @@ class Dashboard:
 
     def render(
         self,
-        top_categories: int = 8,
+        top_categories: int = 10,
         recent_limit: int = 10,
-        upcoming_days: int = 7,
+        upcoming_days: int = 10,
     ) -> None:
         """Full Rich dashboard in one shot."""
         try:
