@@ -324,6 +324,9 @@ def menu_dashboard(ctx: AppCtx) -> None:
             elif choice == 8:
                 print_info("Opening chart window…")
                 ctx.charts.net_worth_over_time()
+            elif choice == 9:
+                print_info("Going back to main menu…")
+                return
         except Exception as exc:
             print_error(str(exc))
             pause()
