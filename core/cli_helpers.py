@@ -650,7 +650,7 @@ def print_table(
                 raw = formatters[key](raw)
  
             # Auto-format common types
-            if isinstance(raw, (date, datetime)):
+            if isinstance(raw, (date, datetime)) and key != "timestamp":  # timestamp gets a custom formatter by default
                 raw = raw.strftime("%d %b %Y") if hasattr(raw, "strftime") else str(raw)
             elif isinstance(raw, float):
                 raw = f"{raw:,.2f}"
@@ -680,6 +680,14 @@ def fmt_money(amount: Any, currency: str = "KES") -> str:
     colour = "green" if val >= 0 else "red"
     sign   = "+" if val > 0 else ""
     return f"[{colour}]{sign}{currency} {val:,.2f}[/{colour}]"
+
+
+def fmt_datetime(value: str) -> str:
+    try:
+        dt = datetime.fromisoformat(value)
+        return dt.strftime("%d-%m-%Y %I:%M %p")
+    except Exception:
+        return str(value)
  
  
 def fmt_date(d: Any) -> str:
@@ -694,6 +702,16 @@ def fmt_date(d: Any) -> str:
         except ValueError:
             return d[:10]
     return str(d) if d else "—"
+
+def fmt_breakdown(data: Dict[str, float], currency: str) -> str:
+    lines = []
+
+    for k, v in data.items():
+        label = k.replace("_", " ").title()
+        amount = fmt_money(v, currency)
+        lines.append(f"{label:<15} {amount}")
+
+    return "\n".join(lines)
  
  
 def fmt_status(status: str) -> str:
@@ -747,13 +765,19 @@ def print_detail_panel(
             continue
  
         label = key.replace("_", " ").title()
- 
+
         if key in currency_keys:
             display = fmt_money(val, currency)
+        elif key == "timestamp":
+            display = fmt_datetime(val)
         elif key in date_keys:
             display = fmt_date(val)
+        elif key == "breakdown_by_type" and isinstance(val, dict):
+            display = fmt_breakdown(val, currency)
         elif key == "status":
             display = fmt_status(str(val)) if val else "—"
+        elif key == "is_active":
+            display = "[green]Active[/green]" if bool(val) else "[dim]Inactive[/dim]"
         elif isinstance(val, bool):
             display = "[green]Yes[/green]" if val else "[red]No[/red]"
         elif val is None:

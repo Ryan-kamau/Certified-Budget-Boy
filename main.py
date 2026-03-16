@@ -12,12 +12,14 @@
  
 from __future__ import annotations
  
+import re
 import sys
 import traceback
 from datetime import date, datetime
 from typing import Any, Dict, Optional
  
 # ── Rich ─────────────────────────────────────────────────
+from matplotlib import category
 from rich.console import Console
 from rich.panel import Panel
 from rich.rule import Rule
@@ -31,7 +33,7 @@ from core.cli_helpers import (
     # Signals
     BackSignal, ExitSignal, LogoutSignal,
     # UI
-    clear_screen, pause, print_app_banner, print_header,
+    clear_screen, fmt_datetime, pause, print_app_banner, print_header,
     print_section, print_success, print_error, print_warning,
     print_info, print_result, print_detail_panel, print_table,
     # Prompts
@@ -42,6 +44,7 @@ from core.cli_helpers import (
     # Helpers
     run_app,
 )
+from core.scheduler import Scheduler
  
 # ── Models ───────────────────────────────────────────────
 from models.user_model        import UserModel
@@ -57,6 +60,11 @@ from features.charts    import FinanceCharts
 from features.dashboard import Dashboard
 from features.search    import SearchService
 from features.recurring import RecurringModel
+from features.export_reports import ExportService, ExportConfig, ExportMetadata
+from  features.insights import InsightsEngine
+from features.search import (
+        TransactionSearchRequest, DateFilter, AmountFilter,
+        TransactionTypeFilter, SortOptions,)
  
  
 # ════════════════════════════════════════════════════════
@@ -81,6 +89,9 @@ class AppCtx:
         self.search_svc  = SearchService(conn, user)
         self.dashboard   = Dashboard(conn, user)
         self.charts      = FinanceCharts(conn, user)
+        self.scheduler   = Scheduler(conn, user)
+        self.exports     = ExportService(conn, user)
+        self.insights    = InsightsEngine(conn, user)
  
     @property
     def username(self) -> str:
@@ -218,6 +229,9 @@ def app_main(ctx: AppCtx) -> None:
         ("🎯  Goals",           "Track savings and spending goals"),
         ("🔁  Recurring",       "Scheduled & recurring transactions"),
         ("🔍  Search",          "Filter and find any transaction"),
+        ("🗓️   Scheduler",          "Run, monitor & control recurring rules"),
+        ("💡  Insights",           "Smart tips, anomaly alerts & spending analysis"),
+        ("📤  Export / Reports",   "CSV, PDF & Excel exports"),
         ("👤  Account Settings","Change password, user management"),
     ]
  
@@ -230,6 +244,9 @@ def app_main(ctx: AppCtx) -> None:
         menu_goals,
         menu_recurring,
         menu_search,
+        menu_scheduler,
+        menu_insights,
+        menu_exports,
         menu_settings,
     ]
  
@@ -324,9 +341,6 @@ def menu_dashboard(ctx: AppCtx) -> None:
             elif choice == 8:
                 print_info("Opening chart window…")
                 ctx.charts.net_worth_over_time()
-            elif choice == 9:
-                print_info("Going back to main menu…")
-                return
         except Exception as exc:
             print_error(str(exc))
             pause()
@@ -348,6 +362,7 @@ def menu_accounts(ctx: AppCtx) -> None:
         ("Restore Account",   "Un-delete a hidden account"),
         ("Balance Health",    "Run a balance integrity check"),
         ("Net Worth",         "Total net worth across all accounts"),
+        ("🗓️   Scheduler",          "Run, monitor & control recurring rules"),
         ("Audit Logs",        "View account audit history"),
     ]
  
@@ -385,15 +400,17 @@ def menu_accounts(ctx: AppCtx) -> None:
                 print_section("➕  Create Account")
                 name     = ask_str("Account name")
                 acc_type = ask_choice("Account type", ACCOUNT_TYPES, default="bank")
-                currency = ask_str("Currency", default="KES")
                 balance  = ask_float("Opening balance", default=0.0, min_val=0)
                 desc     = ask_str("Description", required=False)
+                is_global = ask_str("Is global? (y/n)", default="n", required=False)
+                opening_balance = ask_float("Opening balance", default=balance, min_val=0)
  
                 result = ctx.accounts.create_account(
                     name=name,
                     account_type=acc_type,
-                    currency=currency,
+                    is_global=is_global,
                     balance=balance,
+                    opening_balance=opening_balance,
                     description=desc,
                 )
                 print_result(result)
@@ -420,7 +437,7 @@ def menu_accounts(ctx: AppCtx) -> None:
                     ("name",         "New name"),
                     ("account_type", f"New type ({'/'.join(ACCOUNT_TYPES)})"),
                     ("description",  "New description"),
-                    ("currency",     "New currency"),
+                    ("balance",        "New balance"),
                 ]:
                     val = ask_str(prompt_txt, required=False)
                     if val:
@@ -524,15 +541,14 @@ def menu_categories(ctx: AppCtx) -> None:
         try:
             if choice == 1:
                 res  = ctx.categories.list_categories()
-                cats = res.get("categories", res) if isinstance(res, dict) else res
                 print_table(
-                    cats,
+                    res,
                     columns=[
                         ("ID",     "category_id"),
                         ("Name",   "name"),
+                        ("Description", "description"),
                         ("Parent", "parent_id"),
-                        ("Colour", "color"),
-                        ("Icon",   "icon"),
+                        ("Owner", "owned_by_username"),
                     ],
                     title="Categories",
                     empty_message="No categories yet — create one!",
@@ -543,16 +559,14 @@ def menu_categories(ctx: AppCtx) -> None:
                 print_section("➕  Create Category")
                 name      = ask_str("Category name")
                 parent_id = ask_int("Parent category ID", required=False)
-                color     = ask_str("Colour hex (e.g. #FF5733)", required=False)
-                icon      = ask_str("Icon emoji (e.g. 🍕)", required=False)
                 desc      = ask_str("Description", required=False)
+                is_global     = ask_str("Is global? (y/n)", required=False, default="n")
  
                 result = ctx.categories.create_category(
                     name=name,
                     parent_id=parent_id,
-                    color=color,
-                    icon=icon,
                     description=desc,
+                    is_global=is_global,
                 )
                 print_result(result)
                 pause()
@@ -570,8 +584,8 @@ def menu_categories(ctx: AppCtx) -> None:
                 for field, prompt_txt in [
                     ("name",        "New name"),
                     ("description", "New description"),
-                    ("color",       "New colour"),
-                    ("icon",        "New icon"),
+                    ("parent_id",       "New parent ID"),
+                    ("is_global",        "Is global? (y/n)"),
                 ]:
                     val = ask_str(prompt_txt, required=False)
                     if val:
@@ -590,7 +604,7 @@ def menu_categories(ctx: AppCtx) -> None:
             elif choice == 5:
                 cat_id = ask_int("Category ID")
                 if ask_confirm(f"Soft-delete category #{cat_id}?"):
-                    result = ctx.categories.delete_category(cat_id)
+                    result = ctx.categories.delete_category(cat_id, soft=True)
                     print_result(result)
                 pause()
  
@@ -601,7 +615,7 @@ def menu_categories(ctx: AppCtx) -> None:
                 pause()
  
             elif choice == 7:
-                tree = ctx.categories.get_category_tree()
+                tree = ctx.categories.list_categories(flat=False)
                 _print_tree(tree)
                 pause()
  
@@ -623,7 +637,7 @@ def _print_tree(nodes: Any, indent: int = 0) -> None:
         prefix  = "  " * indent + ("└─ " if indent else "")
         name    = node.get("name", "?")
         cat_id  = node.get("category_id", "?")
-        console.print(f"  {prefix}[cyan]{name}[/cyan]  [dim](#{cat_id})[/dim]")
+        console.print(f"  {prefix}[cyan]{name}[/cyan]  [dim](Category ID: {cat_id})[/dim]")
         children = node.get("children", [])
         if children:
             _print_tree(children, indent + 1)
@@ -696,16 +710,20 @@ def menu_transactions(ctx: AppCtx) -> None:
  
             elif choice == 7:
                 tx_id = ask_int("Transaction ID (blank for all)", required=False)
-                logs  = ctx.transactions.view_audit_logs(transaction_id=tx_id)
+                start_date = ask_date("Start date (optional)", required=False, default=date.today().replace(day=1))
+                end_date   = ask_date("End date (optional)", required=False, default=date.today())
+                logs  = ctx.transactions.view_audit_logs(target_id=tx_id, start_date=start_date, end_date=end_date)
                 print_table(
                     logs,
                     columns=[
-                        ("Time",   "created_at"),
+                        ("Time",   "timestamp"),
                         ("Action", "action"),
+                        ("Changed", "changed_fields"),
                         ("User",   "performed_by"),
                     ],
                     title="Transaction Audit Logs",
-                    formatters={"created_at": fmt_date},
+                    formatters={"timestamp": lambda x: fmt_datetime(x),
+                                "changed_fields": lambda c: ", ".join(c) if isinstance(c, list) else str(c)[:50]},
                 )
                 pause()
  
@@ -720,13 +738,13 @@ def _add_transaction(ctx: AppCtx) -> None:
     """Guided wizard to create a new transaction."""
     print_section("➕  Add Transaction")
  
-    title       = ask_str("Title / description")
-    tx_type     = ask_choice("Transaction type", TX_TYPES)
-    amount      = ask_float("Amount", min_val=0.01)
-    pay_method  = ask_choice("Payment method", PAY_METHODS, default="bank")
+    title       = ask_str("Title", required=True)
+    tx_type     = ask_choice("Transaction type", TX_TYPES, required=True)
+    amount      = ask_float("Amount", min_val=0.01, required=True)
+    pay_method  = ask_choice("Payment method", PAY_METHODS, required=True, default="bank")
     tx_date     = ask_date("Transaction date", required=False, default=date.today())
     cat_id      = ask_int("Category ID", required=False)
-    desc        = ask_str("Notes", required=False)
+    desc        = ask_str("Description", required=False)
     allow_od    = ask_confirm("Allow overdraft?", default=False)
  
     account_id             = None
@@ -745,7 +763,7 @@ def _add_transaction(ctx: AppCtx) -> None:
         amount=amount,
         transaction_type=tx_type,
         payment_method=pay_method,
-        transaction_date=tx_date or date.today(),
+        transaction_date=tx_date,
         category_id=cat_id,
         account_id=account_id,
         source_account_id=source_account_id,
@@ -765,9 +783,17 @@ def _add_transaction(ctx: AppCtx) -> None:
 def _list_transactions(ctx: AppCtx) -> None:
     """Display a paginated list of recent transactions."""
     print_section("📋  Recent Transactions")
+    trans_type = ask_choice("Filter by type", TX_TYPES, default=None, required=False)
+    payment_method = ask_choice("Filter by payment method", PAY_METHODS, default=None, required=False)
+    account_id = ask_int("Filter by account ID", required=False)
+    category_id = ask_int("Filter by category ID", required=False)  
     limit = ask_int("How many to show", default=20, min_val=1, max_val=200)
  
-    res  = ctx.transactions.list_transactions(limit=limit, include_deleted=False)
+    res  = ctx.transactions.list_transactions(transaction_type=trans_type, 
+                                              payment_method=payment_method, 
+                                              category_id=category_id,
+                                              account_id=account_id, 
+                                               limit=limit, include_deleted=False)
     txns = res.get("transactions", [])
  
     print_table(
@@ -778,7 +804,14 @@ def _list_transactions(ctx: AppCtx) -> None:
             ("Title",   "title"),
             ("Type",    "transaction_type"),
             ("Amount",  "amount"),
-            ("Account", "account_id"),
+            ("Account ID", "account_id"),
+            ("Account Name", "account_name"),
+            ("Category", "category_name"),
+            ("Source Acc", "source_account_id"),
+            ("Source Acc Name", "source_account_name"),
+            ("Dest Acc", "destination_account_id"),
+            ("Dest Acc Name", "destination_account_name"),
+            ("Payment", "payment_method"),
         ],
         title=f"Transactions (latest {len(txns)})",
         highlight_col="transaction_type",
@@ -837,8 +870,21 @@ def _update_transaction(ctx: AppCtx) -> None:
  
     allow_od = ask_confirm("Allow overdraft?", default=False)
     updates["allow_overdraft"] = allow_od
+
+    if current.get("transaction_type") in {"transfer", "investment_deposit", "investment_withdraw"}:
+        source_acc = ask_int("New source account ID", required=False)
+        dest_acc   = ask_int("New destination account ID", required=False)
+        if source_acc:
+            updates["source_account_id"] = source_acc
+        if dest_acc:
+            updates["destination_account_id"] = dest_acc
+
+    elif current.get("transaction_type") in {"income", "expense", "debt_borrowed", "debt_repaid"}:
+        acc_id = ask_int("New account ID", required=False)
+        if acc_id:
+            updates["account_id"] = acc_id
  
-    if not updates or list(updates.keys()) == ["allow_overdraft"]:
+    if not updates:
         print_warning("No changes entered.")
         pause()
         return
@@ -890,7 +936,7 @@ def menu_analytics(ctx: AppCtx) -> None:
             elif choice == 2:
                 print_section("🏆  Top Categories")
                 tx_type = ask_choice("Transaction type", TX_TYPES, default="expense")
-                limit   = ask_int("How many categories", default=10, min_val=1)
+                limit   = ask_int("How many categories", default=100, min_val=1)
                 start   = ask_date("Start date", required=False)
                 end     = ask_date("End date",   required=False)
  
@@ -1241,11 +1287,12 @@ def menu_goals(ctx: AppCtx) -> None:
                 print_table(
                     logs,
                     columns=[
-                        ("Time",   "created_at"),
+                        ("Time",   "timestamp"),
                         ("Action", "action"),
+                        ("Changed", "changed_fields"),
                     ],
                     title="Goal Audit Logs",
-                    formatters={"created_at": fmt_date},
+                    formatters={"timestamp": lambda x: fmt_datetime(x)},
                 )
                 pause()
  
@@ -1325,10 +1372,9 @@ def menu_recurring(ctx: AppCtx) -> None:
  
         try:
             if choice == 1:
-                res  = ctx.recurring.list_recurring()
-                rows = res.get("recurring", res) if isinstance(res, dict) else res
+                res  = ctx.recurring.list()
                 print_table(
-                    rows,
+                    res,
                     columns=[
                         ("ID",        "recurring_id"),
                         ("Name",      "name"),
@@ -1336,6 +1382,8 @@ def menu_recurring(ctx: AppCtx) -> None:
                         ("Freq",      "frequency"),
                         ("Amount",    "amount"),
                         ("Next Due",  "next_due"),
+                        ("Maximum missed", "max_missed_runs"),
+                        ("Last Ran Status", "last_run_status"),
                         ("Active",    "is_active"),
                     ],
                     title="Recurring Rules",
@@ -1362,23 +1410,7 @@ def menu_recurring(ctx: AppCtx) -> None:
                 pause()
  
             elif choice == 4:
-                rid     = ask_int("Recurring ID")
-                updates = {}
-                name    = ask_str("New name", required=False)
-                if name:
-                    updates["name"] = name
-                amount  = ask_float("New amount", required=False)
-                if amount:
-                    updates["amount"] = amount
-                freq    = ask_choice("New frequency", FREQUENCIES, required=False)
-                if freq:
-                    updates["frequency"] = freq
-                if updates:
-                    result = ctx.recurring.update_recurring(rid, **updates)
-                    print_result(result)
-                else:
-                    print_warning("No changes entered.")
-                pause()
+                _update_recurring(ctx)
  
             elif choice == 5:
                 rid = ask_int("Recurring ID")
@@ -1391,14 +1423,14 @@ def menu_recurring(ctx: AppCtx) -> None:
  
             elif choice == 6:
                 rid  = ask_int("Recurring ID")
-                hard = ask_confirm("Hard delete?", default=False)
-                result = ctx.recurring.delete_recurring(rid, soft=not hard)
+                soft = ask_confirm("Soft delete?", default=True)
+                result = ctx.recurring.delete_recurring(rid, soft=soft)
                 print_result(result)
                 pause()
  
             elif choice == 7:
                 days = ask_int("Look-ahead days", default=7, min_val=1)
-                rows = ctx.recurring.get_upcoming_due(days_ahead=days)
+                rows = ctx.scheduler.get_upcoming_due(days_ahead=days)
                 print_table(
                     rows,
                     columns=[
@@ -1418,7 +1450,7 @@ def menu_recurring(ctx: AppCtx) -> None:
  
             elif choice == 8:
                 if ask_confirm("Process all overdue recurring transactions now?"):
-                    result = ctx.recurring.process_due_transactions()
+                    result = ctx.scheduler.run_all_due_recurring()
                     processed = result.get("processed", 0)
                     print_success(f"Processed {processed} transaction(s).")
                     if result.get("errors"):
@@ -1435,7 +1467,7 @@ def menu_recurring(ctx: AppCtx) -> None:
  
 def _create_recurring(ctx: AppCtx) -> None:
     print_section("➕  Create Recurring Transaction")
-    name       = ask_str("Rule name")
+    name       = ask_str("name", required=True)
     desc       = ask_str("Description", required=False)
     tx_type    = ask_choice("Transaction type", TX_TYPES)
     freq       = ask_choice("Frequency", FREQUENCIES)
@@ -1471,7 +1503,85 @@ def _create_recurring(ctx: AppCtx) -> None:
     )
     print_result(result)
     pause()
+
+def _update_recurring(ctx: AppCtx) -> None:
+    """Prompt for field-level updates on an existing recurring transaction."""
+    rid = ask_int("Recurring transaction ID to update")
  
+    # Show current state first
+    current = ctx.recurring.get_recurring(rid)
+    print_detail_panel(
+        current,
+        title=f"Current  —  Recurring Transaction #{rid}",
+        currency_keys={"amount"},
+        date_keys={"next_due"},
+        style="dim",
+    )
+    current_type = current.get("transaction_type")
+    print_info("Leave blank to keep current value.")
+    updates = {}
+
+    title = ask_str("New title", required=False)
+    if title:
+        updates["title"] = title
+
+    amount_raw = ask_float("New amount", required=False)
+    if amount_raw is not None:
+        updates["amount"] = amount_raw
+    
+    new_type = ask_choice("New recurring transaction type", TX_TYPES, required=False)
+    if new_type:
+        updates["transaction_type"] = new_type
+
+    freq = ask_choice("New frequency", FREQUENCIES, required=False)
+    if freq:
+        updates["frequency"] = freq
+
+    interv = ask_int("New interval (e.g. every N periods)", default=None, min_val=1)
+    if interv:
+        updates["interval_value"] = interv
+
+    pay = ask_choice("New payment method", PAY_METHODS, required=False)
+    if pay:
+        updates["payment_method"] = pay
+
+    new_date = ask_date("New next due date", required=False)
+    if new_date:
+        updates["next_due"] = new_date
+
+    desc = ask_str("New notes", required=False)
+    if desc:
+        updates["description"] = desc
+
+    cat_id = ask_int("New category ID", required=False)
+    if cat_id:
+        updates["category_id"] = cat_id
+
+    if current_type in {"income", "expense", "debt_borrowed", "debt_repaid"}:
+        account_id = ask_int("New account ID", required=False)
+        if account_id:
+            updates["account_id"] = account_id
+
+    elif current_type in {"transfer", "investment_deposit", "investment_withdraw"}: 
+        source_account_id      = ask_int("New source account ID", required=False)
+        destination_account_id = ask_int("New destination account ID", required=False)
+        if source_account_id:
+            updates["source_account_id"] = source_account_id
+        if destination_account_id:
+            updates["destination_account_id"] = destination_account_id
+
+    allow_od = ask_confirm("Allow overdraft?", default=False)
+    updates["allow_overdraft"] = allow_od
+
+    if not updates:
+        print_warning("No changes entered.")
+        pause()
+        return
+
+    result = ctx.recurring.update(rid, **updates)
+    print_result(result)
+    pause()
+
  
 # ════════════════════════════════════════════════════════
 # ⑩ SEARCH
@@ -1579,6 +1689,529 @@ def menu_search(ctx: AppCtx) -> None:
         except Exception as exc:
             print_error(str(exc))
             pause()
+
+# ════════════════════════════════════════════════════════════════════════════
+# ⑨  SCHEDULER
+# ════════════════════════════════════════════════════════════════════════════
+
+def menu_scheduler(ctx: AppCtx) -> None:
+    from datetime import timedelta
+
+    ITEMS = [
+        # ── Execution ─────────────────────────────────────
+        ("▶️   Run All Due Now",        "Execute every overdue recurring rule"),
+        ("⏰  Run Scheduler Job",       "Full cron-style run with report"),
+        # ── Monitoring ────────────────────────────────────
+        ("📊  Scheduler Status",        "Active / paused / overdue counts"),
+        ("📅  Upcoming Due",            "Rules due in the next N days"),
+        ("🔍  Preview Next Run",        "See what a rule will create next"),
+        # ── Control ───────────────────────────────────────
+        ("⏸️   Pause Rule",              "Suspend a rule until a future date"),
+        ("▶️   Resume Rule",             "Un-pause a suspended rule"),
+        ("⏭️   Skip Next Occurrence",    "Skip one upcoming run only"),
+        ("💰  One-Time Amount Override","Override the amount for next run only"),
+        ("🔴  Deactivate Rule",         "Disable without deleting"),
+        ("🟢  Activate Rule",           "Re-enable a deactivated rule"),
+        # ── History ───────────────────────────────────────
+        ("📜  Full Execution History",  "All recurring run logs"),
+        ("📜  History for One Rule",    "Logs for a specific recurring ID"),
+        ("📜  History by Status",       "Filter logs: generated / skipped / failed"),
+    ]
+
+    while True:
+        clear_screen()
+        print_header("🗓️   Scheduler", username=ctx.username, role=ctx.role)
+
+        try:
+            choice = prompt_choice(ITEMS, title="Scheduler", show_back=True)
+        except BackSignal:
+            return
+
+        try:
+            # ── 1. Run all due ───────────────────────────
+            if choice == 1:
+                if ask_confirm("Run all due recurring transactions now?", default=False):
+                    result = ctx.scheduler.run_all_due_recurring()
+                    if result["success"]:
+                        print_success(
+                            f"Created [bold cyan]{result['created_count']}[/bold cyan] "
+                            f"transaction(s).  IDs: {result['transaction_ids'] or '—'}"
+                        )
+                    else:
+                        print_error(result.get("message", "Run failed."))
+                pause()
+
+            # ── 2. Run scheduler job (cron-style) ────────
+            elif choice == 2:
+                if ask_confirm("Execute full scheduler job?", default=False):
+                    report = ctx.scheduler.run_scheduler_job()
+                    status_colour = "green" if report["job_status"] == "completed" else "red"
+                    print_detail_panel(
+                        {
+                            "Job Status":   report["job_status"],
+                            "Start Time":   report["start_time"],
+                            "End Time":     report["end_time"],
+                            "Created":      report["result"].get("created_count", 0),
+                            "Tx IDs":       str(report["result"].get("transaction_ids", [])),
+                            "Message":      report["result"].get("message", ""),
+                        },
+                        title="Scheduler Job Report",
+                        style=status_colour,
+                    )
+                pause()
+
+            # ── 3. Scheduler status ──────────────────────
+            elif choice == 3:
+                s = ctx.scheduler.get_scheduler_status()
+                from rich.columns import Columns
+                from rich.panel import Panel
+                console.print()
+                console.print(Columns([
+                    Panel(f"[bold green]{s['total_active']}[/bold green]",
+                          title="✅ Active",  border_style="green"),
+                    Panel(f"[bold yellow]{s['total_paused']}[/bold yellow]",
+                          title="⏸️  Paused",  border_style="yellow"),
+                    Panel(f"[bold red]{s['total_overdue']}[/bold red]",
+                          title="🔴 Overdue", border_style="red"),
+                ], expand=True))
+                console.print(f"  [dim]As of {s['timestamp']}[/dim]")
+                pause()
+
+            # ── 4. Upcoming due ──────────────────────────
+            elif choice == 4:
+                days = ask_int("Look-ahead days", default=7, min_val=1)
+                rows = ctx.scheduler.get_upcoming_due(days_ahead=days)
+                print_table(
+                    rows,
+                    columns=[
+                        ("ID",       "recurring_id"),
+                        ("Name",     "name"),
+                        ("Type",     "transaction_type"),
+                        ("Amount",   "amount"),
+                        ("Next Due", "next_due"),
+                        ("Freq",     "frequency"),
+                    ],
+                    title=f"Due in next {days} day(s)  —  {len(rows)} rule(s)",
+                    formatters={
+                        "amount":   lambda v: fmt_money(v),
+                        "next_due": fmt_date,
+                    },
+                    empty_message=f"Nothing due in the next {days} days 🎉",
+                )
+                pause()
+
+            # ── 5. Preview next run ──────────────────────
+            elif choice == 5:
+                rid    = ask_int("Recurring rule ID")
+                result = ctx.scheduler.preview_next_run(rid)
+                print_detail_panel(
+                    result,
+                    title=f"Preview — Rule #{rid}",
+                    currency_keys={"amount", "override_amount"},
+                    date_keys={"next_due", "last_run"},
+                    style="cyan",
+                )
+                pause()
+
+            # ── 6. Pause ─────────────────────────────────
+            elif choice == 6:
+                rid        = ask_int("Recurring rule ID")
+                pause_days = ask_int("Pause for how many days?", min_val=1)
+                pause_until = datetime.now() + timedelta(days=pause_days)
+
+                result = ctx.scheduler.pause_recurring(rid, pause_until)
+                print_result(result)
+                print_info(f"Rule #{rid} paused until [bold]{fmt_date(pause_until)}[/bold].")
+                pause()
+
+            # ── 7. Resume ────────────────────────────────
+            elif choice == 7:
+                rid    = ask_int("Recurring rule ID")
+                result = ctx.scheduler.resume_recurring(rid)
+                print_result(result)
+                pause()
+
+            # ── 8. Skip next occurrence ──────────────────
+            elif choice == 8:
+                rid = ask_int("Recurring rule ID")
+                if ask_confirm(f"Skip the next run of rule #{rid}?", default=False):
+                    result = ctx.scheduler.skip_next_occurrence(rid)
+                    print_result(result)
+                pause()
+
+            # ── 9. One-time amount override ───────────────
+            elif choice == 9:
+                rid      = ask_int("Recurring rule ID")
+                override = ask_float("Override amount for next run only", min_val=0.01)
+                result   = ctx.scheduler.set_one_time_override(rid, override)
+                print_result(result)
+                print_info(f"Next run of rule #{rid} will use [bold cyan]{fmt_money(override)}[/bold cyan].")
+                pause()
+
+            # ── 10. Deactivate ────────────────────────────
+            elif choice == 10:
+                rid = ask_int("Recurring rule ID")
+                if ask_confirm(f"Deactivate rule #{rid}?", default=False):
+                    result = ctx.scheduler.deactivate_recurring(rid)
+                    print_result(result)
+                pause()
+
+            # ── 11. Activate ──────────────────────────────
+            elif choice == 11:
+                rid    = ask_int("Recurring rule ID")
+                result = ctx.scheduler.activate_recurring(rid)
+                print_result(result)
+                pause()
+
+            # ── 12. Full execution history ────────────────
+            elif choice == 12:
+                limit = ask_int("Max records", default=50, min_val=1)
+                logs  = ctx.scheduler.get_recurring_history(limit=limit)
+                _print_scheduler_history(logs)
+                pause()
+
+            # ── 13. History for one rule ──────────────────
+            elif choice == 13:
+                rid   = ask_int("Recurring rule ID")
+                limit = ask_int("Max records", default=20, min_val=1)
+                logs  = ctx.scheduler.get_recurring_history(
+                    recurring_id=rid, limit=limit
+                )
+                _print_scheduler_history(logs, title=f"History — Rule #{rid}")
+                pause()
+
+            # ── 14. History by status ─────────────────────
+            elif choice == 14:
+                status = ask_choice(
+                    "Status filter",
+                    ["generated", "skipped", "failed"],
+                )
+                limit = ask_int("Max records", default=50, min_val=1)
+                logs  = ctx.scheduler.get_recurring_history(
+                    status=status, limit=limit
+                )
+                _print_scheduler_history(logs, title=f"History — {status.title()}")
+                pause()
+
+        except BackSignal:
+            pass
+        except Exception as exc:
+            print_error(str(exc))
+            pause()
+
+
+def _print_scheduler_history(
+    logs: list,
+    title: str = "Execution History",
+) -> None:
+    """Render recurring execution history as a Rich table."""
+    STATUS_COLOUR = {
+        "generated": "[bold green]generated[/bold green]",
+        "skipped":   "[bold yellow]skipped[/bold yellow]",
+        "failed":    "[bold red]failed[/bold red]",
+    }
+    print_table(
+        logs,
+        columns=[
+            ("Run Date",      "run_date"),
+            ("Rule ID",       "recurring_id"),
+            ("Amount Used",   "amount_used"),
+            ("Status",        "status"),
+            ("Override Used", "override_used"),
+            ("Tx ID",         "posted_transaction_id"),
+            ("Message",       "message"),
+        ],
+        title=f"{title}  ({len(logs)} record(s))",
+        formatters={
+            "run_date":    fmt_date,
+            "amount_used": lambda v: fmt_money(v) if v is not None else "—",
+            "status":      lambda v: STATUS_COLOUR.get(str(v).lower(), str(v)),
+            "override_used": lambda v: "[cyan]Yes[/cyan]" if v else "—",
+        },
+        empty_message="No execution history found.",
+    )
+
+# ════════════════════════════════════════════════════════════════════════════
+# ⑩  INSIGHTS
+# ════════════════════════════════════════════════════════════════════════════
+
+# Severity badge map
+_SEV_STYLE = {
+    "critical": "[bold red]🚨 CRITICAL[/bold red]",
+    "warning":  "[bold yellow]⚠️  WARNING[/bold yellow]",
+    "info":     "[bold cyan]ℹ️  INFO[/bold cyan]",
+}
+
+# InsightCategory display labels
+_CAT_LABELS = {
+    "spending":    "💸 Spending",
+    "income":      "💚 Income",
+    "savings":     "🏦 Savings",
+    "category":    "🗂  Category",
+    "transaction": "🧾 Transaction",
+    "debt":        "📋 Debt",
+    "payment":     "💳 Payment",
+}
+
+
+def menu_insights(ctx: AppCtx) -> None:
+    ITEMS = [
+        ("All Insights",            "Full report — every category, sorted by severity"),
+        ("Spending Insights",       "Spikes, daily averages & streak detection"),
+        ("Income Insights",         "Income drops & missing income warnings"),
+        ("Savings Insights",        "Savings rate health & net position"),
+        ("Category Insights",       "Per-category spikes, budget caps & top-shift"),
+        ("Transaction Insights",    "Large single-transaction alerts"),
+        ("Debt Insights",           "Borrowing ratio & debt trend"),
+        ("Payment Method Insights", "Dominant payment method shift detection"),
+        ("Insights Summary",        "Badge-style count: critical / warning / info"),
+        ("Filter by Severity",      "Show only critical, warning or info insights"),
+    ]
+
+    while True:
+        clear_screen()
+        print_header("💡  Smart Insights", username=ctx.username, role=ctx.role)
+
+        try:
+            choice = prompt_choice(ITEMS, title="Insights", show_back=True)
+        except BackSignal:
+            return
+
+        try:
+            # ── Shared date range prompt ─────────────────────────────
+            # Defaulting to current-month vs prior-month (engine default).
+            # Ask the user if they want a custom range.
+            curr_start = curr_end = prev_start = prev_end = None
+
+            if ask_confirm("Use custom date range? (default: this month vs last month)",
+                           default=False):
+                print_section("Current Period")
+                curr_start = ask_date("Current start date", required=True)
+                curr_end   = ask_date("Current end date",   required=True)
+                print_section("Baseline / Prior Period")
+                prev_start = ask_date("Prior start date",   required=True)
+                prev_end   = ask_date("Prior end date",     required=True)
+
+            # ── 1. All Insights ──────────────────────────────────────
+            if choice == 1:
+                insights = ctx.insights.get_all_insights(
+                    curr_start=curr_start, curr_end=curr_end,
+                    prev_start=prev_start, prev_end=prev_end,
+                    as_dicts=False,
+                )
+                _render_insights(insights)
+                pause()
+
+            # ── 2. Spending ──────────────────────────────────────────
+            elif choice == 2:
+                insights = ctx.insights.get_spending_insights(
+                    curr_start=curr_start, curr_end=curr_end,
+                    prev_start=prev_start, prev_end=prev_end,
+                )
+                _render_insights(insights, section="💸  Spending Insights")
+                pause()
+
+            # ── 3. Income ────────────────────────────────────────────
+            elif choice == 3:
+                insights = ctx.insights.get_income_insights(
+                    curr_start=curr_start, curr_end=curr_end,
+                    prev_start=prev_start, prev_end=prev_end,
+                )
+                _render_insights(insights, section="💚  Income Insights")
+                pause()
+
+            # ── 4. Savings ───────────────────────────────────────────
+            elif choice == 4:
+                insights = ctx.insights.get_savings_insights(
+                    curr_start=curr_start, curr_end=curr_end,
+                )
+                _render_insights(insights, section="🏦  Savings Insights")
+                pause()
+
+            # ── 5. Category ──────────────────────────────────────────
+            elif choice == 5:
+                insights = ctx.insights.get_category_insights(
+                    curr_start=curr_start, curr_end=curr_end,
+                    prev_start=prev_start, prev_end=prev_end,
+                )
+                _render_insights(insights, section="🗂   Category Insights")
+                pause()
+
+            # ── 6. Transaction ───────────────────────────────────────
+            elif choice == 6:
+                insights = ctx.insights.get_transaction_insights(
+                    curr_start=curr_start, curr_end=curr_end,
+                )
+                _render_insights(insights, section="🧾  Transaction Insights")
+                pause()
+
+            # ── 7. Debt ──────────────────────────────────────────────
+            elif choice == 7:
+                insights = ctx.insights.get_debt_insights(
+                    curr_start=curr_start, curr_end=curr_end,
+                )
+                _render_insights(insights, section="📋  Debt Insights")
+                pause()
+
+            # ── 8. Payment method ────────────────────────────────────
+            elif choice == 8:
+                insights = ctx.insights.get_payment_insights(
+                    curr_start=curr_start, curr_end=curr_end,
+                    prev_start=prev_start, prev_end=prev_end,
+                )
+                _render_insights(insights, section="💳  Payment Method Insights")
+                pause()
+
+            # ── 9. Summary ───────────────────────────────────────────
+            elif choice == 9:
+                summary = ctx.insights.get_summary(
+                    curr_start=curr_start, curr_end=curr_end,
+                    prev_start=prev_start, prev_end=prev_end,
+                )
+                _render_insights_summary(summary)
+                pause()
+
+            # ── 10. Filter by severity ───────────────────────────────
+            elif choice == 10:
+                sev = ask_choice(
+                    "Severity level",
+                    ["critical", "warning", "info"],
+                )
+                insights = ctx.insights.get_all_insights(
+                    curr_start=curr_start, curr_end=curr_end,
+                    prev_start=prev_start, prev_end=prev_end,
+                    severity_filter=sev,
+                    as_dicts=False,
+                )
+                _render_insights(
+                    insights,
+                    section=f"{_SEV_STYLE[sev]}  Insights",
+                )
+                pause()
+
+        except BackSignal:
+            pass
+        except Exception as exc:
+            print_error(str(exc))
+            pause()
+
+
+def _render_insights(insights: list, section: str = "Insights") -> None:
+    """
+    Render a list of Insight objects (or dicts) as rich panels.
+    Each insight gets its own colour-coded panel: red/yellow/cyan.
+    """
+    from rich.panel import Panel
+
+    print_section(section)
+
+    if not insights:
+        print_info("No insights generated for this period. 🎉 All metrics look healthy!")
+        return
+
+    console.print(f"  [dim]{len(insights)} insight(s) found[/dim]\n")
+
+    _border = {
+        "critical": "red",
+        "warning":  "yellow",
+        "info":     "cyan",
+    }
+
+    for ins in insights:
+        # Accept both Insight objects and plain dicts
+        if hasattr(ins, "severity"):
+            sev, title, msg, cat = ins.severity, ins.title, ins.message, ins.category
+        else:
+            sev   = ins.get("severity", "info")
+            title = ins.get("title", "—")
+            msg   = ins.get("message", "")
+            cat   = ins.get("category", "")
+
+        cat_label  = _CAT_LABELS.get(cat, cat)
+        sev_badge  = _SEV_STYLE.get(sev, sev)
+        border_col = _border.get(sev, "cyan")
+
+        body = (
+            f"{msg}\n\n"
+            f"[dim]Category: {cat_label}   Severity: {sev_badge}[/dim]"
+        )
+
+        console.print(
+            Panel(
+                body,
+                title=f"[bold]{title}[/bold]",
+                border_style=border_col,
+                padding=(0, 2),
+            )
+        )
+
+
+def _render_insights_summary(summary: dict) -> None:
+    """Render the insights summary as colour-coded badge panels + top insight."""
+    from rich.columns import Columns
+    from rich.panel import Panel
+    from rich.align import Align
+
+    print_section("💡  Insights Summary")
+
+    total    = summary.get("total", 0)
+    critical = summary.get("critical", 0)
+    warning  = summary.get("warning", 0)
+    info_cnt = summary.get("info", 0)
+    period   = summary.get("period", {})
+
+    console.print()
+    console.print(Columns([
+        Panel(
+            Align.center(f"[bold red]{critical}[/bold red]"),
+            title="🚨 Critical",
+            border_style="red",
+        ),
+        Panel(
+            Align.center(f"[bold yellow]{warning}[/bold yellow]"),
+            title="⚠️  Warning",
+            border_style="yellow",
+        ),
+        Panel(
+            Align.center(f"[bold cyan]{info_cnt}[/bold cyan]"),
+            title="ℹ️  Info",
+            border_style="cyan",
+        ),
+        Panel(
+            Align.center(f"[bold white]{total}[/bold white]"),
+            title="📋 Total",
+            border_style="dim",
+        ),
+    ], expand=True))
+
+    if period:
+        console.print(
+            f"\n  [dim]Current period : {period.get('current', '—')}[/dim]"
+        )
+        console.print(
+            f"  [dim]Prior period   : {period.get('prior',   '—')}[/dim]\n"
+        )
+
+    # By-category breakdown table
+    by_cat = summary.get("by_category", {})
+    if any(v > 0 for v in by_cat.values()):
+        print_section("By Category")
+        rows = [
+            {"category": _CAT_LABELS.get(k, k), "count": v}
+            for k, v in by_cat.items() if v > 0
+        ]
+        rows.sort(key=lambda r: r["count"], reverse=True)
+        print_table(
+            rows,
+            columns=[("Category", "category"), ("Insights", "count")],
+            title="",
+        )
+
+    # Top insight highlight
+    top = summary.get("top_insight")
+    if top:
+        print_section("🔝 Top Insight")
+        _render_insights([top])
  
  
 # ════════════════════════════════════════════════════════
@@ -1701,6 +2334,296 @@ def menu_settings(ctx: AppCtx) -> None:
             pass
         except LogoutSignal:
             raise
+        except Exception as exc:
+            print_error(str(exc))
+            pause()
+
+# ════════════════════════════════════════════════════════════════════════════
+# ⑪  EXPORT / REPORTS
+# ════════════════════════════════════════════════════════════════════════════
+
+# Shared import helpers used inside this menu
+def _build_tx_filters(
+    group_by: Optional[str] = None,
+) -> "TransactionSearchRequest":
+    """Interactive prompt to build a TransactionSearchRequest."""
+    print_section("📅  Date Range  (blank = all time)")
+    start = ask_date("Start date", required=False)
+    end   = ask_date("End date",   required=False)
+
+    print_section("💰  Amount Range  (blank = no limit)")
+    min_amt = ask_float("Min amount", required=False)
+    max_amt = ask_float("Max amount", required=False)
+
+    print_section("🔖  Transaction Type  (blank = all)")
+    tx_type = ask_choice(
+        "Type filter",
+        ["income", "expense", "transfer",
+         "debt_borrowed", "debt_repaid",
+         "investment_deposit", "investment_withdraw"],
+        required=False,
+    )
+
+    return TransactionSearchRequest(
+        date=DateFilter(start_date=start, end_date=end),
+        amount=AmountFilter(
+            min_amount=min_amt,
+            max_amount=max_amt,
+        ),
+        tx_type=TransactionTypeFilter(
+            transaction_types=[tx_type] if tx_type else None
+        ),
+        sort=SortOptions(sort_by="transaction_date", sort_order="ASC"),
+    )
+
+
+def _print_export_result(meta: "ExportMetadata") -> None:
+    """Display a Rich panel summarising the export output."""
+    size_kb = meta.file_size_bytes / 1024
+    print_detail_panel(
+        {
+            "File":         meta.filename,
+            "Path":         meta.filepath,
+            "Format":       meta.format.upper(),
+            "Records":      meta.record_count,
+            "Date Range":   meta.date_range,
+            "File Size":    f"{size_kb:.1f} KB",
+            "Generated At": fmt_date(meta.generated_at),
+        },
+        title="✅  Export Complete",
+        style="green",
+    )
+
+
+def menu_exports(ctx: AppCtx) -> None:
+
+    ITEMS = [
+        # ── Transaction exports ────────────────────────────────
+        ("Transactions → CSV",          "Flat or grouped CSV"),
+        ("Transactions → PDF",          "Formatted PDF report"),
+        ("Transactions → Excel",        "Multi-sheet .xlsx with charts"),
+        # ── Account exports ────────────────────────────────────
+        ("Accounts → CSV",              "Account list export"),
+        ("Accounts → PDF",              "Account summary PDF"),
+        ("Accounts → Excel",            "Formatted account spreadsheet"),
+        # ── Category export ────────────────────────────────────
+        ("Categories → CSV",            "Category list export"),
+        # ── Pre-built reports ──────────────────────────────────
+        ("Monthly Report",              "Full month  (CSV + PDF or Excel)"),
+        ("Weekly Report",               "ISO-week report (CSV + PDF)"),
+        ("Daily Report",                "Single-day report (CSV + PDF)"),
+        ("Category Analysis",           "Spending drill-down for one category"),
+        # ── Settings ───────────────────────────────────────────
+        ("⚙️   Export Settings",         "Change output folder / page size"),
+    ]
+
+    GROUP_OPTIONS = ["category", "account", "month", "week", "date"]
+    FORMAT_OPTIONS = ["csv", "pdf", "both"]
+
+    while True:
+        clear_screen()
+        print_header("📤  Export / Reports", username=ctx.username, role=ctx.role)
+
+        try:
+            choice = prompt_choice(ITEMS, title="Exports", show_back=True)
+        except BackSignal:
+            return
+
+        try:
+            # ── 1. Transactions → CSV ────────────────────────
+            if choice == 1:
+                print_section("📄  Transactions → CSV")
+                group_by = ask_choice(
+                    "Group by (optional)",
+                    GROUP_OPTIONS,
+                    required=False,
+                )
+                filters  = _build_tx_filters(group_by)
+                meta     = ctx.exports.export_transactions_csv(
+                    filters, group_by=group_by
+                )
+                _print_export_result(meta)
+                pause()
+
+            # ── 2. Transactions → PDF ────────────────────────
+            elif choice == 2:
+                print_section("📑  Transactions → PDF")
+                group_by = ask_choice(
+                    "Group by (optional)",
+                    GROUP_OPTIONS,
+                    required=False,
+                )
+                title    = ask_str("Report title", default="Transaction Report")
+                filters  = _build_tx_filters(group_by)
+                meta     = ctx.exports.export_transactions_pdf(
+                    filters, title=title, group_by=group_by
+                )
+                _print_export_result(meta)
+                pause()
+
+            # ── 3. Transactions → Excel ──────────────────────
+            elif choice == 3:
+                print_section("📊  Transactions → Excel")
+                inc_summary = ask_confirm("Include summary sheet?", default=True)
+                inc_charts  = ask_confirm("Include charts?",         default=True)
+                filters     = _build_tx_filters()
+                meta        = ctx.exports.export_transactions_excel(
+                    filters,
+                    include_summary=inc_summary,
+                    include_charts=inc_charts,
+                )
+                _print_export_result(meta)
+                pause()
+
+            # ── 4. Accounts → CSV ────────────────────────────
+            elif choice == 4:
+                print_section("📄  Accounts → CSV")
+                from features.search import AccountSearchRequest, StatusFilter
+                active_only = ask_confirm("Active accounts only?", default=True)
+                filters = AccountSearchRequest(
+                    status=StatusFilter(active_only=active_only)
+                )
+                meta = ctx.exports.export_accounts_csv(filters)
+                _print_export_result(meta)
+                pause()
+
+            # ── 5. Accounts → PDF ────────────────────────────
+            elif choice == 5:
+                print_section("📑  Accounts → PDF")
+                from features.search import AccountSearchRequest, StatusFilter
+                active_only = ask_confirm("Active accounts only?", default=True)
+                title   = ask_str("Report title", default="Account Summary Report")
+                filters = AccountSearchRequest(
+                    status=StatusFilter(active_only=active_only)
+                )
+                meta = ctx.exports.export_account_summary_pdf(filters, title=title)
+                _print_export_result(meta)
+                pause()
+
+            # ── 6. Accounts → Excel ──────────────────────────
+            elif choice == 6:
+                print_section("📊  Accounts → Excel")
+                from features.search import AccountSearchRequest, StatusFilter
+                active_only = ask_confirm("Active accounts only?", default=True)
+                filters = AccountSearchRequest(
+                    status=StatusFilter(active_only=active_only)
+                )
+                meta = ctx.exports.export_accounts_excel(filters)
+                _print_export_result(meta)
+                pause()
+
+            # ── 7. Categories → CSV ──────────────────────────
+            elif choice == 7:
+                print_section("📄  Categories → CSV")
+                from features.search import CategorySearchRequest
+                name_filter = ask_str("Filter by name (optional)", required=False)
+                filters = CategorySearchRequest(name=name_filter)
+                meta = ctx.exports.export_categories_csv(filters)
+                _print_export_result(meta)
+                pause()
+
+            # ── 8. Monthly Report ────────────────────────────
+            elif choice == 8:
+                print_section("📅  Monthly Report")
+                year   = ask_int("Year",  default=date.today().year,  min_val=2000)
+                month  = ask_int("Month", default=date.today().month, min_val=1, max_val=12)
+                fmt    = ask_choice("Format", ["csv", "pdf", "excel", "both"],
+                                    default="both")
+
+                if fmt == "excel":
+                    meta = ctx.exports.export_monthly_report_excel(year, month)
+                    _print_export_result(meta)
+                else:
+                    results = ctx.exports.export_monthly_report(
+                        year, month,
+                        format="both" if fmt == "both" else fmt,
+                    )
+                    if isinstance(results, list):
+                        for m in results:
+                            _print_export_result(m)
+                    else:
+                        _print_export_result(results)
+                pause()
+
+            # ── 9. Weekly Report ─────────────────────────────
+            elif choice == 9:
+                print_section("📅  Weekly Report")
+                year = ask_int("Year", default=date.today().year, min_val=2000)
+                week = ask_int("ISO Week number", default=date.today().isocalendar()[1],
+                               min_val=1, max_val=53)
+                fmt  = ask_choice("Format", FORMAT_OPTIONS, default="both")
+
+                results = ctx.exports.export_weekly_report(year, week, format=fmt)
+                if isinstance(results, list):
+                    for m in results:
+                        _print_export_result(m)
+                else:
+                    _print_export_result(results)
+                pause()
+
+            # ── 10. Daily Report ─────────────────────────────
+            elif choice == 10:
+                print_section("📅  Daily Report")
+                target = ask_date("Report date", required=True, default=date.today())
+                fmt    = ask_choice("Format", FORMAT_OPTIONS, default="both")
+
+                results = ctx.exports.export_daily_report(target, format=fmt)
+                if isinstance(results, list):
+                    for m in results:
+                        _print_export_result(m)
+                else:
+                    _print_export_result(results)
+                pause()
+
+            # ── 11. Category Analysis ────────────────────────
+            elif choice == 11:
+                print_section("🗂   Category Analysis")
+                cat_name = ask_str("Category name (exact match)")
+                preset   = ask_choice(
+                    "Date preset",
+                    ["last_7_days", "last_30_days", "last_90_days",
+                     "this_month", "last_month", "this_year"],
+                    default="last_30_days",
+                )
+                fmt = ask_choice("Format", FORMAT_OPTIONS, default="both")
+
+                results = ctx.exports.export_category_analysis(
+                    cat_name, date_preset=preset, format=fmt
+                )
+                if isinstance(results, list):
+                    for m in results:
+                        _print_export_result(m)
+                else:
+                    _print_export_result(results)
+                pause()
+
+            # ── 12. Export Settings ──────────────────────────
+            elif choice == 12:
+                print_section("⚙️   Export Settings")
+                print_detail_panel(
+                    {
+                        "Output Directory":    ctx.exports.config.output_dir,
+                        "PDF Page Size":       ctx.exports.config.pdf_pagesize,
+                        "CSV Encoding":        ctx.exports.config.csv_encoding,
+                        "Include Charts":      ctx.exports.config.excel_include_charts,
+                        "Include Formulas":    ctx.exports.config.excel_include_formulas,
+                    },
+                    title="Current Export Config",
+                )
+                if ask_confirm("Change output directory?", default=False):
+                    new_dir = ask_str("New output path", default=ctx.exports.config.output_dir)
+                    ctx.exports.config.output_dir = new_dir
+                    ctx.exports._ensure_output_dir()
+                    print_success(f"Output directory set to [bold cyan]{new_dir}[/bold cyan]")
+
+                if ask_confirm("Change PDF page size?", default=False):
+                    size = ask_choice("Page size", ["letter", "A4"], default="letter")
+                    ctx.exports.config.pdf_pagesize = size
+                    print_success(f"PDF page size set to [bold cyan]{size}[/bold cyan]")
+                pause()
+
+        except BackSignal:
+            pass
         except Exception as exc:
             print_error(str(exc))
             pause()

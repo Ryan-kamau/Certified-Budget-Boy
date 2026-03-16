@@ -401,7 +401,7 @@ class RecurringModel:
         result["destination_account_name"] = row.get("destination_account_name")
         return result
     
-    def list(self,frequency: str, trans_type: str,*, include_deleted: bool = False, global_view: bool = False) -> List[Dict[str, Any]]:
+    def list(self,frequency: Optional[str], trans_type: Optional[str],*, include_deleted: bool = False, global_view: bool = False) -> List[Dict[str, Any]]:
         filter_tenant = f"r.{self._tenant_filter(global_view)}"
         sql = f"""
             SELECT r.*,  

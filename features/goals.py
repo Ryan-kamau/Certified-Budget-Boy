@@ -631,11 +631,9 @@ class GoalService:
     def view_audit_logs(
         self,
         goal_id: Optional[int] = None,
-        global_view: bool = False,
     ) -> List[Dict[str, Any]]:
         """Proxy to GoalModel audit log viewer."""
-        return self.goal_model.view_audit_logs(goal_id=goal_id,
-                                               global_view=global_view)
+        return self.goal_model.view_audit_logs(goal_id=goal_id)
 
 
 

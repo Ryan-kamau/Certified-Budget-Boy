@@ -539,20 +539,17 @@ class GoalModel:
     def view_audit_logs(
         self,
         goal_id: Optional[int] = None,
-        global_view: bool = False,
     ) -> List[Dict[str, Any]]:
         """Retrieve audit entries for goals from the shared audit_log table."""
-        filter_clause = self._tenant_filter(global_view)
         sql = f"""
             SELECT a.*, u.username AS performed_by
             FROM audit_log a
             LEFT JOIN users u ON a.user_id = u.user_id
             WHERE a.target_table = 'goals'
-              AND a.{filter_clause}
+              AND a.user_id = %s
         """
         params: List[Any] = []
-        if "%s" in filter_clause:
-            params.append(self.user["user_id"])
+        params.append(self.user["user_id"])
 
         if goal_id is not None:
             sql += " AND a.target_id = %s"
