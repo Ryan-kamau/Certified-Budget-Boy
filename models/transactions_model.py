@@ -236,7 +236,7 @@ class TransactionModel:
                     f"{trans_type} transaction requires 'account_id'"
                 )
         
-        elif trans_type in {"transfer", "investment_deposit", "investment_withdrawal"}:
+        elif trans_type in {"transfer", "investment_deposit", "investment_withdraw"}:
             if not source_acc:
                 raise TransactionValidationError(
                     f"{trans_type} transaction requires 'source_account_id'"
@@ -566,7 +566,6 @@ class TransactionModel:
         merged.update(updates)
 
         # Validate full structure
-        self._validate_transaction_accounts(merged)
 
         self._validate_transaction_accounts(merged)
         self._assert_ownership(merged.get("account_id"), merged.get("category_id"))
@@ -684,7 +683,8 @@ class TransactionModel:
 
         if payment_method:
             if payment_method not in {'cash','bank','mobile_money','credit_card','other'}:
-                raise TransactionValidationError(f"Payment Method Not Found ...Use: {'income', 'expense', 'transfer', 'debt_repaid', 'debt_borrowed', 'investment_deposit', 'investment_withdraw'} ")
+                raise TransactionValidationError(f"Payment Method Not Found ...Use: "
+                                                 "{'cash','bank','mobile_money','credit_card','other'} ")
             
             query += " AND payment_method = %s"
             params.append(payment_method)
@@ -737,6 +737,8 @@ class TransactionModel:
         recursive=True → also delete all children recursively
         """
         tx = self.get_transaction(transaction_id, include_deleted=True)
+        if not tx:
+            raise TransactionNotFoundError(f"Transaction {transaction_id} not found.")
         tx_trans_type = tx["transaction_type"]
 
         # ✨ NEW: Reverse balance changes when deleting
@@ -747,15 +749,23 @@ class TransactionModel:
                 source=f"REVERSED_{tx_trans_type}",
                 transaction_data=tx
             )
+            if soft:
+                self._execute("UPDATE transactions SET is_deleted = 1 WHERE transaction_id = %s AND user_id = %s", (transaction_id, self.user_id,))
+            else:
+                self._execute("DELETE FROM transactions WHERE transaction_id = %s AND user_id = %s", (transaction_id, self.user_id,))
         except Exception as e:
+            self.balance_service.apply_transaction_change(
+                transaction_id=transaction_id,
+                transaction_type=tx_trans_type,
+                amount=float(tx["amount"]),
+                account_id=tx.get("account_id"),
+                source_account_id=tx.get("source_account_id"),
+                destination_account_id=tx.get("destination_account_id"),
+                allow_overdraft=False            )
             raise TransactionValidationError(
                 f"Failed to reverse balance on delete: {str(e)}"
             )
         
-        if soft:
-            self._execute("UPDATE transactions SET is_deleted = 1 WHERE transaction_id = %s AND user_id = %s", (transaction_id, self.user_id,))
-        else:
-            self._execute("DELETE FROM transactions WHERE transaction_id = %s AND user_id = %s", (transaction_id, self.user_id,))
 
         if recursive:
             children = self._get_children_recursive(transaction_id, include_deleted=True)
@@ -769,8 +779,10 @@ class TransactionModel:
                         source=f"REVERSED_{child_trans_type}",
                         transaction_data=child_data
                     )
-                except:
-                    pass 
+                except Exception as e:
+                    raise TransactionValidationError(
+                            f"Failed to reverse balance for child transaction {child.transaction_id}: {e}"
+                        )
                 if soft:
                     self._execute("UPDATE transactions SET is_deleted= 1 WHERE transaction_id = %s", (child.transaction_id,))
                 else:
@@ -781,9 +793,6 @@ class TransactionModel:
                 action="TRANSACTION_DELETED",
                 old_values=tx,
             )
-        user_id = self.user_id
-        if not tx:
-            raise TransactionNotFoundError(f"Transaction {transaction_id} not found.")
 
 
         return {
@@ -798,44 +807,49 @@ class TransactionModel:
             raise TransactionNotFoundError(f"Transaction {transaction_id} not found.")
         
         try:
-                self.balance_service.apply_transaction_change(
-                    transaction_id=transaction_id,
-                    transaction_type=tx["transaction_type"],
-                    amount=float(tx["amount"]),
-                    account_id=tx.get("account_id"),
-                    source_account_id=tx.get("source_account_id"),
-                    destination_account_id=tx.get("destination_account_id"),
-                    allow_overdraft=True  # Allow overdraft on restore
+            self._execute("UPDATE transactions SET is_deleted = 0 WHERE transaction_id = %s AND user_id = %s", (transaction_id, self.user_id))
+
+            if recursive:
+                children = self._get_children_recursive(transaction_id, include_deleted=True)
+                for child in children:
+                    child_data = self.get_transaction(child.transaction_id, include_deleted=True)
+                    self.balance_service.apply_transaction_change(
+                        transaction_id=child.transaction_id,
+                        transaction_type=child_data["transaction_type"],
+                        amount=float(child_data["amount"]),
+                        account_id=child_data.get("account_id"),
+                        source_account_id=child_data.get("source_account_id"),
+                        destination_account_id=child_data.get("destination_account_id"),
+                        allow_overdraft=True
+                    )
+                    self._execute("UPDATE transactions SET is_deleted = 0 " 
+                                    "WHERE transaction_id = %s", (child.transaction_id,))
+                    
+            self.balance_service.apply_transaction_change(
+                transaction_id=transaction_id,
+                transaction_type=tx["transaction_type"],
+                amount=float(tx["amount"]),
+                account_id=tx.get("account_id"),
+                source_account_id=tx.get("source_account_id"),
+                destination_account_id=tx.get("destination_account_id"),
+                allow_overdraft=True  # Allow overdraft on restore
+            )
+            self._audit_log(
+                    target_id=transaction_id,
+                    action="TRANSACTION_UPDATED",
+                    old_values={"is_deleted": True},
+                    new_values={"is_deleted": False},
+                    changed_fields=["is_deleted"],
                 )
         except Exception as e:
+            self.balance_service.reverse_transaction_change(
+                transaction_id=transaction_id,
+                source="RESTORE_FAILED",
+                transaction_data=tx
+            )
             raise TransactionValidationError(
-                f"Failed to reapply balance on restore: {str(e)}"
+                f"Transaction restoration Error...Either Balance or Child Restoration Failed: {str(e)}"
             )
-        self._audit_log(
-                target_id=transaction_id,
-                action="TRANSACTION_UPDATED",
-                old_values={"is_deleted": True},
-                new_values={"is_deleted": False},
-                changed_fields=["is_deleted"],
-            )
-        
-        self._execute("UPDATE transactions SET is_deleted = 0 WHERE transaction_id = %s AND user_id = %s", (transaction_id, self.user_id))
-
-        if recursive:
-            children = self._get_children_recursive(transaction_id, include_deleted=True)
-            for child in children:
-                child_data = self.get_transaction(child.transaction_id, include_deleted=True)
-                self.balance_service.apply_transaction_change(
-                    transaction_id=child.transaction_id,
-                    transaction_type=child_data["transaction_type"],
-                    amount=float(child_data["amount"]),
-                    account_id=child_data.get("account_id"),
-                    source_account_id=child_data.get("source_account_id"),
-                    destination_account_id=child_data.get("destination_account_id"),
-                    allow_overdraft=True
-                )
-                self._execute("UPDATE transactions SET is_deleted = 0 WHERE transaction_id = %s", (child.transaction_id,))
-
 
         return {"success": True, "message": f"Transaction {transaction_id} restored successfully."}
     

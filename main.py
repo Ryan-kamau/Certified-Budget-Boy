@@ -16,7 +16,7 @@ import re
 import sys
 import traceback
 from datetime import date, datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Text
  
 # ── Rich ─────────────────────────────────────────────────
 from matplotlib import category
@@ -45,6 +45,7 @@ from core.cli_helpers import (
     run_app,
 )
 from core.scheduler import Scheduler
+from core.utils import ValidationPatterns
  
 # ── Models ───────────────────────────────────────────────
 from models.user_model        import UserModel
@@ -63,8 +64,9 @@ from features.recurring import RecurringModel
 from features.export_reports import ExportService, ExportConfig, ExportMetadata
 from  features.insights import InsightsEngine
 from features.search import (
-        TransactionSearchRequest, DateFilter, AmountFilter,
-        TransactionTypeFilter, SortOptions,)
+        TransactionSearchRequest, DateFilter, AmountFilter, TextSearchFilter,
+        TransactionTypeFilter, SortOptions, CategoryFilter, CategorySearchRequest, AccountFilter, Pagination)
+
  
  
 # ════════════════════════════════════════════════════════
@@ -178,11 +180,11 @@ def auth_screen(conn: Any) -> AppCtx:
         elif choice == 3:
             console.print()
             print_section("🔑  Password Reset")
- 
+            security_question = um.get_security_question()
             # Need a temp logged-in context for change_password (it requires _require_login)
             # Workaround: direct SQL-level reset via authenticate flow
             username = ask_str("Your username", allow_back=True)
-            sec_ans  = ask_str("Security answer", allow_back=True)
+            sec_ans  = ask_str(f"Security answer: {security_question}", allow_back=True)
             new_pass = ask_password("New password (min 6 chars)")
  
             # Authenticate with security answer path
@@ -1607,22 +1609,26 @@ def menu_search(ctx: AppCtx) -> None:
             if choice == 1:
                 print_section("🔍  Transaction Search")
                 text    = ask_str("Search text (title / notes)", required=False)
+                pay_methods = ask_choice("Payment method", PAY_METHODS, required=False)
                 start   = ask_date("From date",  required=False)
                 end     = ask_date("To date",    required=False)
                 min_amt = ask_float("Min amount", required=False)
                 max_amt = ask_float("Max amount", required=False)
+                date_preset = ask_choice("Date preset", ValidationPatterns().DATE_PRESETS, required=False, default=None)
                 tx_type = ask_choice("Transaction type", TX_TYPES, required=False)
+                cat     = ask_int("Category ID", required=False)
                 limit   = ask_int("Max results", default=50, min_val=1)
  
-                from features.search import TransactionSearchRequest, TextSearchFilter, DateFilter, AmountFilter, TxTypeFilter
                 req = TransactionSearchRequest(
                     text=TextSearchFilter(search_text=text) if text else TextSearchFilter(),
-                    date=DateFilter(start_date=start, end_date=end),
+                    date=DateFilter(start_date=start, end_date=end, date_preset=date_preset),
+                    category=CategoryFilter(category_id=cat) if cat else CategoryFilter(),
                     amount=AmountFilter(min_amount=min_amt, max_amount=max_amt),
-                    tx_type=TxTypeFilter(
-                        transaction_types=[tx_type] if tx_type else None
+                    tx_type=TransactionTypeFilter(
+                        transaction_types=[tx_type] if tx_type else None,
+                        payment_methods=pay_methods,
                     ),
-                    pagination=type("P", (), {"limit": limit, "offset": 0})(),
+                    pagination=Pagination(page_size=limit),
                 )
                 result = ctx.search_svc.search_transactions(req)
                 rows   = result.get("results", [])
@@ -1646,8 +1652,12 @@ def menu_search(ctx: AppCtx) -> None:
  
             elif choice == 2:
                 text   = ask_str("Category name to search")
+                category = ask_int("Category ID to filter by", required=False)
+                include_children = ask_confirm("Include subcategories?", default=True)
                 from features.search import CategorySearchRequest
-                req    = CategorySearchRequest(name=text)
+                req    = CategorySearchRequest(text=TextSearchFilter(search_text=text), 
+                                               category= CategoryFilter(category_ids=[category], 
+                                                                        include_children=include_children) if category else CategoryFilter())
                 result = ctx.search_svc.search_categories(req)
                 rows   = result.get("results", [])
                 print_table(
@@ -1659,12 +1669,17 @@ def menu_search(ctx: AppCtx) -> None:
                     ],
                     title="Matching Categories",
                 )
+                if include_children:
+                    print_info(f"Included subcategories of category ID {category}.")
+                    _print_tree(rows)
                 pause()
  
             elif choice == 3:
                 from features.search import AccountSearchRequest
+                acc_id   = ask_int("Account ID to search for", required=False)
                 acc_type = ask_choice("Account type", ACCOUNT_TYPES, required=False)
-                req      = AccountSearchRequest(account_type=acc_type)
+                req      = AccountSearchRequest(AccountFilter(account_ids=[acc_id] if acc_id else None,
+                                                               account_types=acc_type))
                 result   = ctx.search_svc.search_accounts(req)
                 rows     = result.get("results", [])
                 print_table(
@@ -2219,117 +2234,191 @@ def _render_insights_summary(summary: dict) -> None:
 # ════════════════════════════════════════════════════════
  
 def menu_settings(ctx: AppCtx) -> None:
+    # ── Base items (all users) ────────────────────────────────
     ITEMS = [
-        ("Change Password",         "Update your login password"),
-        ("Change Security Answer",  "Update password-reset answer"),
-        ("View My Profile",         "See your account details"),
-        ("Logout",                  "Sign out and return to login"),
+        ("Change Password",          "Update your login password"),
+        ("Change Security Answer",   "Update your security answer"),
+        ("Change Security Question", "Update your security question"),
+        ("View My Profile",          "See your account details"),
+        ("Logout",                   "Sign out and return to login"),
     ]
- 
-    # Admin-only extras
+
+    # ── Admin-only extras ─────────────────────────────────────
     if ctx.is_admin():
         ITEMS += [
-            ("List All Users",   "[admin] View all registered users"),
-            ("Promote to Admin", "[admin] Grant admin role to a user"),
-            ("Demote to User",   "[admin] Revoke admin from a user"),
-            ("Deactivate User",  "[admin] Disable a user account"),
+            ("List All Users",    "[admin] View all registered users"),
+            ("Promote to Admin",  "[admin] Grant admin role to a user"),
+            ("Demote to User",    "[admin] Revoke admin from a user"),
+            ("Activate User",     "[admin] Re-enable a disabled account"),   # was MISSING
+            ("Deactivate User",   "[admin] Disable a user account"),
+            ("Delete User",       "[admin] Permanently remove a user"),      # was MISSING
         ]
- 
+
     while True:
         clear_screen()
         print_header("👤  Account Settings", username=ctx.username, role=ctx.role)
- 
+
         try:
             choice = prompt_choice(ITEMS, title="Settings", show_back=True)
         except BackSignal:
             return
- 
+
+        # Fresh UserModel each iteration so current_user is always in sync
         um = UserModel(ctx.conn)
         um.current_user = ctx.user
- 
+
         try:
+            # ── 1. Change Password ───────────────────────────
             if choice == 1:
-                old_pass = ask_password("Current password")
-                # Verify current password first
+                old_pass = ask_password("Current password (to verify it's you)")
                 test = UserModel(ctx.conn).authenticate(ctx.username, old_pass)
                 if not test.get("success"):
                     print_error("Current password is incorrect.")
                     pause()
                     continue
- 
+
                 new_pass = ask_password("New password (min 6 chars)")
-                sec_ans  = ask_str("Security answer (to confirm)")
-                result   = um.change_password(ctx.username, new_pass, sec_ans)
+                # Fetch and display the stored security question
+                try:
+                    question = um.get_security_question()
+                except Exception:
+                    question = "Security answer"
+                sec_ans = ask_str(
+                    f"Security answer  [{question}]",
+                    required=True,
+                )
+                # UserModel.change_password(new_password, secur_ans) — no username arg
+                result = um.change_password(new_pass, sec_ans)
                 print_result(result)
                 pause()
- 
+
+            # ── 2. Change Security Answer ────────────────────
             elif choice == 2:
-                new_ans = ask_str("New security answer")
-                result  = um.change_security_answer(ctx.username, new_ans)
+                try:
+                    question = um.get_security_question()
+                except Exception:
+                    question = "your security question"
+                new_ans = ask_str(f"New answer for: [{question}]", required=True)
+                # UserModel.change_security_answer(new_answer) — no username arg
+                result = um.change_security_answer(new_ans)
                 print_result(result)
                 pause()
- 
+
+            # ── 3. Change Security Question ──────────────────
             elif choice == 3:
-                res = um.get_all_user_details(
+                try:
+                    current_q = um.get_security_question()
+                    print_info(f"Current question: [bold]{current_q}[/bold]")
+                except Exception:
+                    pass
+                new_q = ask_str("New security question", required=True)
+                result = um.change_security_question(new_q)
+                print_result(result)
+                pause()
+
+            # ── 4. View My Profile ───────────────────────────
+            elif choice == 4:
+                password    = ask_password("Confirm password")
+                sec_ans     = ask_str("Security answer", required=False, default="")
+                res         = um.get_all_user_details(
                     ctx.username,
-                    password=ask_password("Confirm password"),
-                    security_answer=ask_str("Security answer"),
+                    password=password,
+                    security_answer=sec_ans or None,
                 )
                 if res.get("success"):
-                    user_data = res.get("user", res)
+                    # get_all_user_details returns a "users" list — find own record
+                    users_list = res.get("users", [])
+                    own = next(
+                        (u for u in users_list if u.get("username") == ctx.username),
+                        users_list[0] if users_list else {},
+                    )
                     print_detail_panel(
-                        user_data,
+                        own,
                         title="My Profile",
-                        exclude_keys=["password_hash", "security_answer_hash"],
+                        exclude_keys=["password_hash", "security_answer_hash",
+                                      "security_question"],
                         date_keys={"created_at", "updated_at"},
                     )
                 else:
                     print_error(res.get("message", "Could not retrieve profile."))
                 pause()
- 
-            elif choice == 4:
+
+            # ── 5. Logout ────────────────────────────────────
+            elif choice == 5:
                 if ask_confirm("Log out?", default=False):
                     um.logout()
                     raise LogoutSignal()
- 
-            # ── Admin ─────────────────────────────────
-            elif ctx.is_admin() and choice == 5:
+
+            # ══ ADMIN-ONLY (choices 6–11) ════════════════════
+
+            # ── 6. List All Users ────────────────────────────
+            elif ctx.is_admin() and choice == 6:
                 res  = um.list_users()
-                rows = res.get("users", res) if isinstance(res, dict) else res
+                rows = res.get("users", []) if isinstance(res, dict) else res
                 print_table(
                     rows,
                     columns=[
-                        ("ID",       "user_id"),
-                        ("Username", "username"),
-                        ("Role",     "role"),
-                        ("Active",   "is_active"),
+                        ("ID",         "user_id"),
+                        ("Username",   "username"),
+                        ("Role",       "role"),
+                        ("Active",     "is_active"),
+                        ("Created",    "created_at"),
                     ],
-                    title="All Users",
+                    title=f"All Users ({len(rows)})",
                     formatters={
-                        "is_active": lambda v: "[green]Yes[/green]" if v else "[red]No[/red]",
+                        "is_active":  lambda v: "[green]Yes[/green]" if v else "[red]No[/red]",
+                        "created_at": fmt_date,
                     },
                 )
                 pause()
- 
-            elif ctx.is_admin() and choice == 6:
-                uname  = ask_str("Username to promote")
-                result = um.promote_to_admin(uname)
-                print_result(result)
-                pause()
- 
+
+            # ── 7. Promote to Admin ──────────────────────────
             elif ctx.is_admin() and choice == 7:
+                uname  = ask_str("Username to promote")
+                if ask_confirm(f"Grant admin to '{uname}'?", default=False):
+                    result = um.promote_to_admin(uname)
+                    print_result(result)
+                pause()
+
+            # ── 8. Demote to User ────────────────────────────
+            elif ctx.is_admin() and choice == 8:
                 uname  = ask_str("Username to demote")
-                result = um.demote_to_user(uname)
+                if ask_confirm(f"Revoke admin from '{uname}'?", default=False):
+                    result = um.demote_to_user(uname)
+                    print_result(result)
+                pause()
+
+            # ── 9. Activate User  (was MISSING) ─────────────
+            elif ctx.is_admin() and choice == 9:
+                uname  = ask_str("Username to activate")
+                result = um.activate_user(uname)
                 print_result(result)
                 pause()
- 
-            elif ctx.is_admin() and choice == 8:
-                uname  = ask_str("Username to deactivate")
-                if ask_confirm(f"Deactivate '{uname}'?"):
+
+            # ── 10. Deactivate User ──────────────────────────
+            elif ctx.is_admin() and choice == 10:
+                uname = ask_str("Username to deactivate")
+                if ask_confirm(f"Deactivate '{uname}'?", default=False):
                     result = um.deactivate_user(uname)
                     print_result(result)
                 pause()
- 
+
+            # ── 11. Delete User  (was MISSING) ───────────────
+            elif ctx.is_admin() and choice == 11:
+                uname = ask_str("Username to permanently delete")
+                print_warning(
+                    f"This will PERMANENTLY delete '{uname}' — this cannot be undone."
+                )
+                if ask_confirm(f"Type 'yes' to confirm deletion of '{uname}'?",
+                               default=False):
+                    result = um.delete_user(uname)
+                    if result is True or (isinstance(result, dict) and result.get("success")):
+                        print_success(f"User '{uname}' deleted.")
+                    else:
+                        msg = result.get("message", "Delete failed.") if isinstance(result, dict) else "User not found."
+                        print_error(msg)
+                pause()
+
         except BackSignal:
             pass
         except LogoutSignal:
@@ -2337,7 +2426,7 @@ def menu_settings(ctx: AppCtx) -> None:
         except Exception as exc:
             print_error(str(exc))
             pause()
-
+            
 # ════════════════════════════════════════════════════════════════════════════
 # ⑪  EXPORT / REPORTS
 # ════════════════════════════════════════════════════════════════════════════

@@ -471,6 +471,7 @@ def ask_float(
  
         return val
 
+
 def ask_date(
     prompt: str,
     *,
@@ -478,35 +479,55 @@ def ask_date(
     default: Optional[date] = None,
     allow_back: bool = True,
 ) -> Optional[date]:
+    from core.utils import DateRangeValidator, ValidationPatterns
+
     """
     Prompt for a date in YYYY-MM-DD format.
- 
+
     Shortcuts:
       today  → today's date
+      preset → select a date preset (e.g. "last_month", "start_of_year")
       blank  → default (if provided) or None (if not required)
+      b      → go back (if allowed)
     """
-    default_hint = ""
+
+    # --- Build hint text (NO function calls here) ---
     if default:
-        default_hint = f" [dim](default: {default}  or type 'today')[/dim]"
+        default_hint = f" [dim](default: {default} or type 'preset' for options or 'today' | 't')[/dim]"
     elif not required:
-        default_hint = " [dim](optional — blank to skip, or 'today')[/dim]"
- 
+        default_hint = " [dim](optional — blank to skip, or type 'preset' for options or 'today' | 't')[/dim]"
+    else:
+        default_hint = " [dim](type 'preset' for options or 'today' | 't')[/dim]"
+
     if allow_back:
         default_hint += " [dim](B=back)[/dim]"
- 
+
     console.print(f"  [bold]{prompt}[/bold]  [dim]YYYY-MM-DD[/dim]{default_hint}")
+
+    # --- Input loop ---
     while True:
         try:
             raw = input("  › ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             raise ExitSignal()
- 
+
+        # --- Navigation ---
         if raw == "b" and allow_back:
             raise BackSignal()
- 
+
+        # --- Shortcuts ---
         if raw in ("today", "t"):
             return date.today()
- 
+
+        if raw in ("preset", "p"):
+            choice = ask_choice(
+                "Date preset",
+                ValidationPatterns().DATE_PRESETS,
+                required=True
+            )
+            return DateRangeValidator().get_preset_range(choice)
+
+        # --- Blank handling ---
         if not raw:
             if default is not None:
                 return default
@@ -514,13 +535,15 @@ def ask_date(
                 return None
             print_warning("A date is required.")
             continue
- 
+
+        # --- Parse date ---
         try:
             return datetime.strptime(raw, "%Y-%m-%d").date()
         except ValueError:
-            print_warning("Invalid format — use YYYY-MM-DD (e.g. 2025-01-15) or 'today'.")
- 
- 
+            print_warning(
+                "Invalid format — use YYYY-MM-DD (e.g. 2025-01-15), 'today', or 'preset'."
+            )
+
 def ask_choice(
     prompt: str,
     options: Sequence[str],
@@ -725,6 +748,29 @@ def fmt_status(status: str) -> str:
         "deleted":   "[dim]deleted[/dim]",
     }
     return mapping.get(status.lower(), status)
+
+
+def fmt_list_of_dicts(rows: List[Dict[str, Any]], currency: str):
+    table = Table(show_header=True, header_style="bold cyan")
+
+    # dynamic columns
+    for key in rows[0].keys():
+        table.add_column(key.replace("_", " ").title())
+
+    for row in rows:
+        formatted_row = []
+
+        for k, v in row.items():
+            if k in ("created_at", "updated_at"):
+                v = fmt_datetime(v)
+            elif k == "is_active":
+                v = "[green]Active[/green]" if v else "[dim]Inactive[/dim]"
+
+            formatted_row.append(str(v))
+
+        table.add_row(*formatted_row)
+
+    return table
  
  
 # ════════════════════════════════════════════════════════
@@ -768,6 +814,8 @@ def print_detail_panel(
 
         if key in currency_keys:
             display = fmt_money(val, currency)
+        elif isinstance(val, list) and val and isinstance(val[0], dict):    
+            display = fmt_list_of_dicts(val, currency)
         elif key == "timestamp":
             display = fmt_datetime(val)
         elif key in date_keys:

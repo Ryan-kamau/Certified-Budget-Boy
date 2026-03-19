@@ -21,14 +21,14 @@ CREATE TABLE `account_logs` (
   CONSTRAINT `account_logs_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`account_id`) ON DELETE CASCADE,
   CONSTRAINT `account_logs_ibfk_2` FOREIGN KEY (`owner_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE,
   CONSTRAINT `account_logs_ibfk_3` FOREIGN KEY (`transaction_id`) REFERENCES `transactions` (`transaction_id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=82 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=182 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `accounts`;
 CREATE TABLE `accounts` (
   `account_id` int NOT NULL AUTO_INCREMENT,
   `owner_id` int NOT NULL,
   `name` varchar(255) NOT NULL,
-  `account_type` enum('cash','bank','mobile_money','credit','savings','other') NOT NULL,
+  `account_type` enum('cash','bank','mobile_money','credit','savings','investment','other') DEFAULT NULL,
   `description` text,
   `balance` decimal(15,2) NOT NULL DEFAULT '0.00',
   `opening_balance` decimal(15,2) NOT NULL DEFAULT '0.00',
@@ -44,7 +44,7 @@ CREATE TABLE `accounts` (
   KEY `idx_active` (`is_active`),
   KEY `idx_balance` (`balance`),
   CONSTRAINT `accounts_ibfk_1` FOREIGN KEY (`owner_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `audit_log`;
 CREATE TABLE `audit_log` (
@@ -65,7 +65,7 @@ CREATE TABLE `audit_log` (
   KEY `idx_timestamp` (`timestamp`),
   KEY `idx_action` (`action`),
   CONSTRAINT `audit_log_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=29 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=83 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `categories`;
 CREATE TABLE `categories` (
@@ -88,7 +88,36 @@ CREATE TABLE `categories` (
   CONSTRAINT `categories_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `categories` (`category_id`) ON DELETE SET NULL,
   CONSTRAINT `categories_ibfk_2` FOREIGN KEY (`owner_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE,
   CONSTRAINT `categories_ibfk_3` FOREIGN KEY (`updated_by`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+DROP TABLE IF EXISTS `goals`;
+CREATE TABLE `goals` (
+  `goal_id` int NOT NULL AUTO_INCREMENT,
+  `owner_id` int NOT NULL,
+  `name` varchar(150) NOT NULL,
+  `description` text,
+  `goal_type` enum('saving','spending','budget_cap') NOT NULL,
+  `target_amount` decimal(12,2) NOT NULL,
+  `start_date` date NOT NULL,
+  `end_date` date NOT NULL,
+  `category_id` int DEFAULT NULL,
+  `account_id` int DEFAULT NULL,
+  `status` enum('active','completed','failed','paused') NOT NULL DEFAULT 'active',
+  `is_global` tinyint(1) NOT NULL DEFAULT '0',
+  `is_deleted` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`goal_id`),
+  KEY `fk_goals_category` (`category_id`),
+  KEY `fk_goals_account` (`account_id`),
+  KEY `idx_goals_owner_status` (`owner_id`,`status`),
+  KEY `idx_goals_type` (`goal_type`),
+  KEY `idx_goals_dates` (`start_date`,`end_date`),
+  CONSTRAINT `fk_goals_account` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`account_id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_goals_category` FOREIGN KEY (`category_id`) REFERENCES `categories` (`category_id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_goals_owner` FOREIGN KEY (`owner_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE,
+  CONSTRAINT `goals_chk_1` CHECK ((`target_amount` > 0))
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `recurring_logs`;
 CREATE TABLE `recurring_logs` (
@@ -132,7 +161,7 @@ CREATE TABLE `recurring_transactions` (
   `override_amount` decimal(15,2) DEFAULT NULL,
   `amount` decimal(15,2) NOT NULL,
   `category_id` int DEFAULT NULL,
-  `transaction_type` enum('income','expense','transfer','debts') NOT NULL DEFAULT 'expense',
+  `transaction_type` enum('income','expense','transfer','debt_repaid','debt_borrowed','investment_deposit','investment_withdraw') NOT NULL,
   `payment_method` enum('cash','bank','mobile_money','credit','other') NOT NULL DEFAULT 'mobile_money',
   `notes` text,
   `account_id` int DEFAULT NULL,
@@ -158,7 +187,7 @@ CREATE TABLE `recurring_transactions` (
   CONSTRAINT `recurring_transactions_ibfk_3` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`account_id`) ON DELETE RESTRICT,
   CONSTRAINT `recurring_transactions_ibfk_4` FOREIGN KEY (`source_account_id`) REFERENCES `accounts` (`account_id`) ON DELETE RESTRICT,
   CONSTRAINT `recurring_transactions_ibfk_5` FOREIGN KEY (`destination_account_id`) REFERENCES `accounts` (`account_id`) ON DELETE RESTRICT,
-  CONSTRAINT `recurring_transactions_chk_1` CHECK ((((`transaction_type` in (_cp850'income',_cp850'expense',_cp850'debts')) and (`account_id` is not null) and (`source_account_id` is null) and (`destination_account_id` is null)) or ((`transaction_type` = _cp850'transfer') and (`account_id` is null) and (`source_account_id` is not null) and (`destination_account_id` is not null) and (`source_account_id` <> `destination_account_id`)))),
+  CONSTRAINT `recurring_transactions_chk_1` CHECK ((((`transaction_type` in (_utf8mb4'income',_utf8mb4'expense',_utf8mb4'debts')) and (`account_id` is not null) and (`source_account_id` is null) and (`destination_account_id` is null)) or ((`transaction_type` = _utf8mb4'transfer') and (`account_id` is null) and (`source_account_id` is not null) and (`destination_account_id` is not null) and (`source_account_id` <> `destination_account_id`)))),
   CONSTRAINT `recurring_transactions_chk_2` CHECK ((`amount` > 0)),
   CONSTRAINT `recurring_transactions_chk_3` CHECK ((`interval_value` > 0))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -168,7 +197,7 @@ CREATE TABLE `transactions` (
   `transaction_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
   `title` varchar(255) NOT NULL,
-  `transaction_type` enum('income','expense','transfer','debt','investment') NOT NULL,
+  `transaction_type` enum('income','expense','transfer','debt_repaid','debt_borrowed','investment_deposit','investment_withdraw') NOT NULL,
   `amount` decimal(15,2) NOT NULL,
   `payment_method` enum('cash','bank','mobile_money','credit_card','other') NOT NULL,
   `account_id` int DEFAULT NULL,
@@ -193,22 +222,24 @@ CREATE TABLE `transactions` (
   KEY `idx_deleted` (`is_deleted`),
   KEY `idx_user_date` (`user_id`,`transaction_date`),
   KEY `fk_parent_transaction` (`parent_transaction_id`),
+  KEY `idx_transactions_category_goal` (`user_id`,`transaction_type`,`category_id`,`transaction_date`),
+  KEY `idx_transactions_goal_lookup` (`user_id`,`transaction_type`,`account_id`,`transaction_date`),
   CONSTRAINT `fk_parent_transaction` FOREIGN KEY (`parent_transaction_id`) REFERENCES `transactions` (`transaction_id`) ON DELETE SET NULL,
   CONSTRAINT `transactions_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE,
   CONSTRAINT `transactions_ibfk_2` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`account_id`) ON DELETE RESTRICT,
   CONSTRAINT `transactions_ibfk_3` FOREIGN KEY (`source_account_id`) REFERENCES `accounts` (`account_id`) ON DELETE RESTRICT,
   CONSTRAINT `transactions_ibfk_4` FOREIGN KEY (`destination_account_id`) REFERENCES `accounts` (`account_id`) ON DELETE RESTRICT,
   CONSTRAINT `transactions_ibfk_5` FOREIGN KEY (`category_id`) REFERENCES `categories` (`category_id`) ON DELETE SET NULL,
-  CONSTRAINT `transactions_chk_1` CHECK ((((`transaction_type` in (_cp850'income',_cp850'expense',_cp850'debt_repaid',_cp850'debt_borrowed')) and (`account_id` is not null) and (`source_account_id` is null) and (`destination_account_id` is null)) or ((`transaction_type` in (_cp850'transfer',_cp850'investment_deposit',_cp850'investment_withdraw')) and (`account_id` is null) and (`source_account_id` is not null) and (`destination_account_id` is not null)))),
+  CONSTRAINT `transactions_chk_1` CHECK ((((`transaction_type` in (_utf8mb4'income',_utf8mb4'expense',_utf8mb4'debt_repaid',_utf8mb4'debt_borrowed')) and (`account_id` is not null) and (`source_account_id` is null) and (`destination_account_id` is null)) or ((`transaction_type` in (_utf8mb4'transfer',_utf8mb4'investment_deposit',_utf8mb4'investment_withdraw')) and (`account_id` is null) and (`source_account_id` is not null) and (`destination_account_id` is not null)))),
   CONSTRAINT `transactions_chk_2` CHECK ((`amount` > 0))
-) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=69 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users` (
   `user_id` int NOT NULL AUTO_INCREMENT,
   `username` varchar(255) NOT NULL,
   `password_hash` varchar(255) NOT NULL,
-  `security_question` varchar(255) DEFAULT 'What is your Favourite colour',
+  `security_question` varchar(255) NOT NULL DEFAULT 'What is your Favourite colour',
   `security_answer_hash` varchar(255) NOT NULL,
   `role` enum('admin','user') NOT NULL DEFAULT 'user',
   `is_active` tinyint(1) NOT NULL DEFAULT '1',

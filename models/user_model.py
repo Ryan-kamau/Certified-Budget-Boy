@@ -252,11 +252,11 @@ class UserModel:
     # ==========================================================
     # USER SELF-SERVICE FUNCTIONS
     # ==========================================================
-    def change_password(self, username: str, new_password: str, secur_ans: str) -> Dict[str, Any]:
+    def change_password(self, new_password: str, secur_ans: str) -> Dict[str, Any]:
         """Allow user to change their password."""
         try:
             self._require_login()
-            user = self._get_user_by_username(username)
+            user = self._get_user_by_username(self.current_user.get("username"))
             if not user:
                 return {"success": False, "message": "User not found."}
 
@@ -268,7 +268,8 @@ class UserModel:
 
             new_hash = self._hash(new_password)
             with self.conn.cursor() as cur:
-                cur.execute("UPDATE users SET password_hash = %s WHERE username = %s", (new_hash, username))
+                cur.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", 
+                            (new_hash, self.current_user.get("user_id")))
                 self.conn.commit()
                 return {
                     "success": True if cur.rowcount > 0 else False,
@@ -279,15 +280,15 @@ class UserModel:
             self.conn.rollback()
             return {"success": False, "message": f"Error: {e}"}
 
-    def change_security_answer(self, username: str, new_answer: str) -> Dict[str, Any]:
+    def change_security_answer(self, new_answer: str) -> Dict[str, Any]:
         """Change user’s security answer."""
         try:
             self._require_login()
             new_hash = self._hash(new_answer)
             with self.conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE users SET security_answer_hash = %s WHERE username = %s",
-                    (new_hash, username),
+                    "UPDATE users SET security_answer_hash = %s WHERE user_id = %s",
+                    (new_hash, self.current_user.get("user_id")),
                 )
                 self.conn.commit()
                 return {
@@ -315,7 +316,7 @@ class UserModel:
             if not user:
                 return {"success": False, "message": "Current user not found."}
             
-            if not password or not security_answer:
+            if not password and not security_answer:
                 raise ValueError("Input either Password or Security answer.....OR both")
 
             # Verify that provided credentials belong to the current user
@@ -349,6 +350,37 @@ class UserModel:
         except Exception as e:
             return {"success": False, "message": f"Error retrieving user details: {e}"}
 
+    def get_security_question(self) -> str:
+        "Return the security question. "
+        user_id = self.current_user.get("user_id") if self.current_user else None
+        if not user_id:
+            raise PermissionError("You must be logged in to view the security question.")
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT security_question FROM users " 
+                        "WHERE user_id = %s LIMIT 1", (user_id,))
+            result = cur.fetchone()
+        return result["security_question"] if result else ""
+    
+    def change_security_question(self, new_question: str) -> Dict[str, Any]:
+        """Change user’s security question."""
+        try:
+            self._require_login()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE users SET security_question = %s WHERE user_id = %s",
+                    (new_question, self.current_user.get("user_id")),
+                )
+                self.conn.commit()
+                return {
+                    "success": True if cur.rowcount > 0 else False,
+                    "message": "Security question updated successfully."
+                    if cur.rowcount > 0
+                    else "No update made.",
+                }
+
+        except Exception as e:
+            self.conn.rollback()
+            return {"success": False, "message": f"Error: {e}"}
 
     # ==========================================================
     # CLEANUP
