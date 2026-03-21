@@ -6,7 +6,7 @@ import mysql.connector
 
 # Import from your other modules
 from features.recurring import RecurringModel, RecurringError, RecurringNotFoundError, RecurringValidationError
-
+from core.utils import ValidationError, DatabaseError, error_logger
 class SchedulerError(Exception): 
     """Base exception for Scheduler-specific errors"""
     pass
@@ -67,13 +67,18 @@ class Scheduler:
                 "message": f"Successfully created {len(created_ids)} transactions from recurring rules"
             }
         except RecurringError as e:
+            error_logger.log_error(
+                e,
+                location="Scheduler.run_all_due_recurring",
+                user_id=self.user_id
+            )
             return {
                 "success": False,
                 "error": str(e),
                 "created_count": 0,
                 "transaction_ids": [],
-                "message": f"Failed to execute recurring transactions: {str(e)}"
-            }
+                "message": f"Failed to execute recurring transactions: {str(e)}" 
+            } 
         
     def preview_next_run(self, recurring_id: int) -> Dict[str, Any]:
         """
@@ -91,7 +96,12 @@ class Scheduler:
         try:
             return self.recurring.preview_next_run(recurring_id)
         except (RecurringNotFoundError, RecurringValidationError) as e:
-            raise SchedulerError(f"Preview failed: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.preview_next_run",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Preview failed: {str(e)}") from  e
 
     def get_recurring_history(self, 
                             recurring_id: Optional[int] = None,
@@ -117,7 +127,12 @@ class Scheduler:
                 status=status
             ) 
         except RecurringError as e:
-            raise SchedulerError(f"Failed to retrieve history: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.get_recurring_history",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Failed to retrieve history: {str(e)}") from e
     
     def pause_recurring(self, recurring_id: int, pause_until: datetime) -> Dict[str, Any]:
         """
@@ -140,7 +155,12 @@ class Scheduler:
                 is_active=0
             )
         except RecurringError as e:
-            raise SchedulerError(f"Failed to pause recurring: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.pause_recurring",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Failed to pause recurring: {str(e)}") from e
 
     def resume_recurring(self, recurring_id: int) -> Dict[str, Any]:
         """
@@ -162,7 +182,12 @@ class Scheduler:
                 is_active=1
             )
         except RecurringError as e:
-            raise SchedulerError(f"Failed to resume recurring: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.resume_recurring",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Failed to resume recurring: {str(e)}") from e
 
     def skip_next_occurrence(self, recurring_id: int) -> Dict[str, Any]:
         """
@@ -184,7 +209,12 @@ class Scheduler:
                 skip_next=1
             )
         except RecurringError as e:
-            raise SchedulerError(f"Failed to skip next occurrence: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.skip_next_occurrence",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Failed to skip next occurrence: {str(e)}") from e
         
     def set_one_time_override(self, recurring_id: int, override_amount: float) -> Dict[str, Any]:
         """
@@ -207,7 +237,12 @@ class Scheduler:
                 override_amount=override_amount
             )
         except RecurringError as e:
-            raise SchedulerError(f"Failed to set override: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.set_one_time_override",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Failed to set override: {str(e)}") from e
 
     def get_upcoming_due(self, days_ahead: int = 7) -> List[Dict[str, Any]]:
         """
@@ -235,7 +270,12 @@ class Scheduler:
             return upcoming
             
         except RecurringError as e:
-            raise SchedulerError(f"Failed to get upcoming due: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.get_upcoming_due",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Failed to get upcoming due: {str(e)}") from e
 
     def deactivate_recurring(self, recurring_id: int) -> Dict[str, Any]:
         """
@@ -256,7 +296,12 @@ class Scheduler:
                 is_active=0
             )
         except RecurringError as e:
-            raise SchedulerError(f"Failed to deactivate recurring: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.deactivate_recurring",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Failed to deactivate recurring: {str(e)}") from e
 
     def activate_recurring(self, recurring_id: int) -> Dict[str, Any]:
         """
@@ -277,7 +322,12 @@ class Scheduler:
                 is_active=1
             )
         except RecurringError as e:
-            raise SchedulerError(f"Failed to activate recurring: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.activate_recurring",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Failed to activate recurring: {str(e)}") from e
 
     # ===================================================================
     # OPTIONAL: Cron-style Runner (for external scheduler systems)
@@ -323,6 +373,11 @@ class Scheduler:
             }
             
         except Exception as e:
+            error_logger.log_error(
+                e,
+                location="Scheduler.run_scheduler_job",
+                user_id=self.user_id
+            )
             return {
                 "job_status": "failed",
                 "start_time": start_time.isoformat(),
@@ -369,4 +424,9 @@ class Scheduler:
             }
             
         except RecurringError as e:
-            raise SchedulerError(f"Failed to get scheduler status: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="Scheduler.get_scheduler_status",
+                user_id=self.user_id
+            )
+            raise SchedulerError(f"Failed to get scheduler status: {str(e)}") from e

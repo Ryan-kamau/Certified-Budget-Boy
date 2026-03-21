@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import date, datetime
 from decimal import Decimal
+from core.utils import DatabaseError, ValidationError, error_logger
 
 import mysql.connector
 
@@ -18,11 +19,11 @@ class AnalyticsError(Exception):
     """Base exception for analytics operations."""
 
 
-class AnalyticsValidationError(AnalyticsError):
+class AnalyticsValidationError(ValidationError):
     """Raised when invalid parameters are supplied."""
 
 
-class AnalyticsDatabaseError(AnalyticsError):
+class AnalyticsDatabaseError(DatabaseError):
     """Raised when a database-level error occurs."""
 
 
@@ -101,6 +102,11 @@ class AnalyticsModel:
                     return results
                 return None
         except mysql.connector.Error as e:
+            error_logger.log_error(
+                e,
+                location="AnalyticsModel._execute",
+                user_id=self.user_id,
+            )
             raise AnalyticsDatabaseError(f"MySQL Error: {e}") from e
 
     def _tenant_filter(self, alias: str = "t", *, global_view: bool = False) -> str:

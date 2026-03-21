@@ -46,6 +46,14 @@ from core.cli_helpers import (
 )
 from core.scheduler import Scheduler
 from core.utils import ValidationPatterns
+from core.utils import (
+    BudgetTrackerError,
+    DatabaseError,
+    ValidationError,
+    NotFoundError,
+    ConfigurationError,
+    error_logger,
+)
  
 # ── Models ───────────────────────────────────────────────
 from models.user_model        import UserModel
@@ -282,7 +290,37 @@ def app_main(ctx: AppCtx) -> None:
             raise  # bubble up to restart auth screen
         except ExitSignal:
             raise
+        except ValidationError as exc:
+            # Bad user input — show the field and value, no traceback needed
+            print_error(f"Validation error: {exc}")
+            pause()
+        except NotFoundError as exc:
+            print_error(f"Not found: {exc}")
+            pause()
+        except DatabaseError as exc:
+            # Genuine DB failure — already logged in the model's _execute
+            print_error(f"Database error — please try again.")
+            if ctx.is_admin():
+                traceback.print_exc()
+            pause()
+        except BudgetTrackerError as exc:
+            # Any other app error
+            error_logger.log_error(
+                exc,
+                location="app_main",
+                user_id=ctx.user_id,
+                include_traceback=True,
+            )
+            print_error(f"Unexpected error: {exc}")
+            pause()
         except Exception as exc:
+            # True unexpected error (bug) — log it and show admin traceback
+            error_logger.log_error(
+                exc,
+                location="app_main",
+                user_id=ctx.user_id,
+                include_traceback=True,
+            )
             print_error(f"Unexpected error: {exc}")
             if ctx.is_admin():
                 traceback.print_exc()
@@ -743,7 +781,7 @@ def _add_transaction(ctx: AppCtx) -> None:
     title       = ask_str("Title", required=True)
     tx_type     = ask_choice("Transaction type", TX_TYPES, required=True)
     amount      = ask_float("Amount", min_val=0.01, required=True)
-    pay_method  = ask_choice("Payment method", PAY_METHODS, required=True, default="bank")
+    pay_method  = ask_choice("Payment method", PAY_METHODS, required=True, default="mobile_money")
     tx_date     = ask_date("Transaction date", required=False, default=date.today())
     cat_id      = ask_int("Category ID", required=False)
     desc        = ask_str("Description", required=False)
@@ -2732,12 +2770,18 @@ def main() -> None:
       5. On ExitSignal   → clean farewell
     """
     # ── DB Connection ────────────────────────────────────
-    db   = DatabaseConnection()
-    conn = db.get_connection()
+    try:
+        db   = DatabaseConnection()
+        conn = db.get_connection()
+    except ConfigurationError as exc:
+        console.print(f"[bold red]❌  Configuration error: {exc}[/bold red]")
+        sys.exit(1)
  
     if not conn:
-        console.print("[bold red]❌  Could not connect to the database. "
-                      "Check your .env / config.[/bold red]")
+        console.print(
+            "[bold red]❌  Could not connect to the database.\n"
+            "Check config/config.ini — host, user, password, database, port.[/bold red]"
+        )
         sys.exit(1)
  
     # ── Auth + App Loop ───────────────────────────────────

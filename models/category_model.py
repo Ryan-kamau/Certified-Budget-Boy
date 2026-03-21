@@ -41,6 +41,7 @@ from typing import Any, Dict, Optional, List, Tuple
 import mysql.connector
 from datetime import datetime
 import json
+from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 
 # ============================================================
 # Exceptions
@@ -50,19 +51,19 @@ class CategoryError(Exception):
     pass
 
 
-class NotFoundError(CategoryError):
+class NotFoundError(NotFoundError):
     pass
 
 
-class DuplicateNameError(CategoryError):
+class DuplicateNameError(ValidationError):
     pass
 
 
-class ConstraintError(CategoryError):
+class ConstraintError(ValidationError):
     pass
 
 
-class InvalidOperationError(CategoryError):
+class InvalidOperationError(ValidationError):
     pass
 
 
@@ -120,8 +121,13 @@ class CategoryModel:
                 self.conn.rollback()
             except Exception:
                 pass
-            raise CategoryError(f"Database error: {err}")
-
+            error_logger.log_error(
+                err,
+                location="CategoryModel._execute",
+                user_id=self.user_id,
+            )
+            raise CategoryError(f"Database error: {err}") from err
+ 
     def _exists_category(self, category_id: int, include_deleted: bool = True) -> bool:
         q = "SELECT 1 FROM categories WHERE category_id = %s"
         if not include_deleted:

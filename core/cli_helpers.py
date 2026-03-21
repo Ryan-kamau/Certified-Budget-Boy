@@ -30,6 +30,7 @@ import time
 import sys
 from datetime import date, datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from core.utils import DateRangeValidator, ValidationPatterns, ValidationError
 
 from rich import box
 from rich.align import Align
@@ -479,7 +480,7 @@ def ask_date(
     default: Optional[date] = None,
     allow_back: bool = True,
 ) -> Optional[date]:
-    from core.utils import DateRangeValidator, ValidationPatterns
+    
 
     """
     Prompt for a date in YYYY-MM-DD format.
@@ -522,10 +523,10 @@ def ask_date(
         if raw in ("preset", "p"):
             choice = ask_choice(
                 "Date preset",
-                ValidationPatterns().DATE_PRESETS,
+                ValidationPatterns.DATE_PRESETS,
                 required=True
             )
-            return DateRangeValidator().get_preset_range(choice)
+            return DateRangeValidator.get_preset_range(choice)
 
         # --- Blank handling ---
         if not raw:
@@ -616,7 +617,7 @@ def ask_confirm(prompt: str, default: bool = False) -> bool:
  
 def ask_password(prompt: str = "Password") -> str:
     """Prompt for a password (hidden input via getpass)."""
-    console.print(f"  [bold]{prompt}:[/bold]  [dim](input hidden)[/dim]")
+    console.print(f"  [bold]{prompt}:[/bold]  [dim][/dim]")
     try:
         return input("  › ")
     except (EOFError, KeyboardInterrupt):

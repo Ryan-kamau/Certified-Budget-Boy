@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, date
 from models.transactions_model import TransactionModel
 from models.category_model import CategoryModel
 from models.account_model import AccountModel
+from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 import mysql.connector
 import json
 
@@ -16,13 +17,13 @@ import json
 class RecurringError(Exception):
     pass
 
-class RecurringNotFoundError(RecurringError):
+class RecurringNotFoundError(NotFoundError):
     pass
 
-class RecurringValidationError(RecurringError):
+class RecurringValidationError(ValidationError):
     pass
 
-class RecurringDatabaseError(RecurringError):
+class RecurringDatabaseError(DatabaseError):
     pass
 
 
@@ -107,8 +108,13 @@ class RecurringModel:
                 self.conn.rollback()
             except:
                 pass
+            error_logger.log_error(
+                e,
+                location="RecurringModel._execute",
+                user_id=self.user.get("user_id"),
+            )
+            raise RecurringDatabaseError(f"MySQL Error: {str(e)}") from e
 
-            raise RecurringDatabaseError(f"MySQL Error: {str(e)}")
         
     def _tenant_filter(self, global_view: bool =False):
         "Row-level isolation."

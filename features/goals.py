@@ -41,7 +41,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 import mysql.connector
-
+from core.utils import error_logger
 from models.goal_model import (
     GoalModel,
     GoalError,
@@ -107,6 +107,11 @@ class GoalService:
                 self.conn.rollback()
             except Exception:
                 pass
+            error_logger.log_error(
+                exc,
+                location="GoalService._execute",
+                user_id=self.user_id,
+            )
             raise GoalDatabaseError(f"GoalService DB error: {exc}") from exc
 
     # ------------------------------------------------------------------

@@ -1,11 +1,13 @@
 #CRUD logic for transactions
 from __future__ import annotations
 from dataclasses import dataclass, asdict, field
+from tkinter import N
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import date, datetime
 from models.category_model import CategoryModel
 from features.balance import BalanceService
 from models.account_model import AccountModel
+from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 import mysql.connector
 import json
 
@@ -17,15 +19,15 @@ class TransactionError(Exception):
     """Base class for transaction-related exceptions."""
 
 
-class TransactionNotFoundError(TransactionError):
+class TransactionNotFoundError(NotFoundError):
     """Raised when a transaction is not found."""
 
 
-class TransactionValidationError(TransactionError):
+class TransactionValidationError(ValidationError):
     """Raised when invalid transaction data is provided."""
 
 
-class DatabaseError(TransactionError):
+class DatabaseError(DatabaseError):
     """Raised when a database-level error occurs."""
 
 
@@ -105,7 +107,13 @@ class TransactionModel:
                 self.conn.rollback()
             except Exception:
                 pass
-            raise DatabaseError(f"Database error: {err}")
+            error_logger.log_error(
+                err,
+                location="TransactionModel._execute",
+                user_id=self.user_id,
+            )
+            raise DatabaseError(f"Database error: {err}") from err
+ 
     # Tenant Filter & Audit Logging
 
     def _tenant_filter(self, alias: str = "t", global_view: bool = False) -> str:

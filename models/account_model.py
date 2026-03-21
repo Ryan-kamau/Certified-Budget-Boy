@@ -1,6 +1,7 @@
 # models/accounts_model.py
 from __future__ import annotations
 from dataclasses import dataclass, asdict, field
+from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 import mysql.connector
@@ -11,9 +12,9 @@ import json
 # Exceptions
 # ==========================
 class AccountError(Exception): pass
-class AccountNotFoundError(AccountError): pass
-class AccountValidationError(AccountError): pass
-class AccountDataBaseError(AccountError):pass
+class AccountNotFoundError(NotFoundError): pass
+class AccountValidationError(ValidationError): pass
+class AccountDataBaseError(DatabaseError):pass
 
 
 # ==========================
@@ -80,7 +81,13 @@ class AccountModel:
                 self.conn.rollback()
             except:
                 pass
-            raise AccountDataBaseError(f"MySQL Error: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="AccountModel._execute",
+                user_id=self.user.get("user_id"),
+            )
+            raise AccountDataBaseError(f"MySQL Error: {str(e)}") from e
+            
         
         
     def _tenant_filter(self, global_view: bool =False):
@@ -146,7 +153,7 @@ class AccountModel:
         missing = [f for f in required if f not in data]
 
         if missing:
-            raise AccountValidationError(f"Missing required fields: {missing}")
+            raise AccountValidationError(f"Missing required fields: {missing}", field=",".join(missing))
         
         sql = """
             INSERT INTO accounts
@@ -244,7 +251,7 @@ class AccountModel:
 
         if account_type:
             if account_type not in acc_types:
-                raise AccountValidationError(f"Account Type Not Found ...Use: {acc_types} ")
+                raise AccountValidationError(f"Account Type Not Found ...Use: {acc_types} ", field="account_type")
             
             query += " AND a.account_type = %s"
             params.append(account_type)

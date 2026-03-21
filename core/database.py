@@ -3,6 +3,7 @@ import mysql.connector
 from mysql.connector import Error
 import configparser
 import os
+from core.utils import ConfigurationError, error_logger
 
 class DatabaseConnection:
     def __init__(self):
@@ -17,8 +18,10 @@ class DatabaseConnection:
         config_path = os.path.join(BASE_DIR, "config", "config.ini")
 
         if not os.path.exists(config_path):
-            raise FileNotFoundError(f"⚠️ Config file not found: {config_path}")
-        
+            raise ConfigurationError(
+                f"Config file not found: {config_path}. "
+                "Ensure config/config.ini exists with a [mysql] section."
+            )
         config.read(config_path)
 
         return {
@@ -40,6 +43,11 @@ class DatabaseConnection:
             return self.connection
             
         except Error as e:
+            error_logger.log_error(
+                e,
+                location="DatabaseConnection.get_connection",
+                extra="host=" + str(db_config.get("host", "unknown")),
+            )
             print(f"❌ Error connecting to MySQL: {e}")
             self.connection =  None
         
@@ -58,7 +66,7 @@ class DatabaseConnection:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Automatically closes connection when leaving context."""
-        self.close()
+        self.close_connection()
 
 
         

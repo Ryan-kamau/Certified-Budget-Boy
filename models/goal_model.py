@@ -38,6 +38,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 from models.account_model import AccountModel
 from models.category_model import CategoryModel
+from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 import json
 import mysql.connector
 
@@ -50,15 +51,15 @@ class GoalError(Exception):
     """Base exception for goal errors."""
 
 
-class GoalNotFoundError(GoalError):
+class GoalNotFoundError(NotFoundError):
     """Raised when a goal cannot be located."""
 
 
-class GoalValidationError(GoalError):
+class GoalValidationError(ValidationError):
     """Raised when invalid goal data is supplied."""
 
 
-class GoalDatabaseError(GoalError):
+class GoalDatabaseError(DatabaseError):
     """Raised on raw DB / MySQL failures."""
 
 
@@ -157,6 +158,11 @@ class GoalModel:
                 self.conn.rollback()
             except Exception:
                 pass
+            error_logger.log_error(
+                exc,
+                location="GoalModel._execute",
+                user_id=self.user.get("user_id"),
+            )
             raise GoalDatabaseError(f"MySQL Error: {exc}") from exc
 
     def _tenant_filter(self, global_view: bool = False) -> str:

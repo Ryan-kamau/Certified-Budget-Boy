@@ -51,7 +51,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import mysql.connector
 
-from models.analytics_model import AnalyticsModel, AnalyticsError, AnalyticsValidationError
+from models.analytics_model import AnalyticsModel
+from core.utils import DatabaseError, ValidationError, error_logger
 
 
 # ============================================================
@@ -62,11 +63,11 @@ class InsightsError(Exception):
     """Base exception for InsightsEngine errors."""
 
 
-class InsightsValidationError(InsightsError):
+class InsightsValidationError(ValidationError):
     """Raised when invalid parameters are supplied."""
 
 
-class InsightsDatabaseError(InsightsError):
+class InsightsDatabaseError(DatabaseError):
     """Raised on raw DB / MySQL failures."""
 
 
@@ -231,7 +232,13 @@ class InsightsEngine:
                     return results
                 return None
         except mysql.connector.Error as exc:
+            error_logger.log_error(
+                exc,
+                location="InsightsEngine._execute",
+                user_id=self.user_id,
+            )
             raise InsightsDatabaseError(f"MySQL Error: {exc}") from exc
+    
 
     def _tenant_filter(self, alias: str = "t") -> str:
         """

@@ -74,7 +74,10 @@ from features.search import (
 from core.utils import (
     DateRangeValidator,
     FormatHelper,
-    ValidationPatterns
+    ValidationPatterns,
+    error_logger,
+    BudgetTrackerError,
+    ValidationError,
 )
 
 
@@ -114,12 +117,12 @@ class ExportMetadata:
 # Custom Exceptions
 # ================================================================
 
-class ExportError(Exception):
+class ExportError(BudgetTrackerError):
     """Base exception for export operations"""
     pass
 
 
-class ExportValidationError(ExportError):
+class ExportValidationError(ValidationError):
     """Raised when export parameters are invalid"""
     pass
 
@@ -262,10 +265,12 @@ class ExportService:
         except ExportError:
             raise
         except Exception as e:
-            import traceback
-            raise ExportError(
-                f"CSV export failed: {str(e)}\n{traceback.format_exc()}"
-            ) from e
+            error_logger.log_error(
+                e,
+                location="ExportService.export_transactions_csv",
+                user_id=self.user_id,
+            )
+            raise ExportError(f"CSV export failed: {str(e)}") from e
 
     def export_accounts_csv(
         self,
@@ -331,7 +336,12 @@ class ExportService:
             return metadata
             
         except Exception as e:
-            raise ExportError(f"Account CSV export failed: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="ExportService.export_accounts_csv",
+                user_id=self.user_id,
+            )
+            raise ExportError(f"Account CSV export failed: {str(e)}") from e
     
     def export_categories_csv(
         self,
@@ -396,7 +406,12 @@ class ExportService:
             return metadata
             
         except Exception as e:
-            raise ExportError(f"Category CSV export failed: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="ExportService.export_categories_csv",
+                user_id=self.user_id,
+            )
+            raise ExportError(f"Category CSV export failed: {str(e)}") from e
     
     # ================================================================
     # PDF EXPORTS
@@ -507,7 +522,12 @@ class ExportService:
             return metadata
             
         except Exception as e:
-            raise ExportError(f"PDF export failed: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="ExportService.export_transactions_pdf",
+                user_id=self.user_id
+            )
+            raise ExportError(f"PDF export failed: {str(e)}") from e
 
     def export_account_summary_pdf(
         self,
@@ -624,7 +644,12 @@ class ExportService:
             return metadata
             
         except Exception as e:
-            raise ExportError(f"Account PDF export failed: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="ExportService.export_account_summary_pdf",
+                user_id=self.user_id
+            )
+            raise ExportError(f"Account PDF export failed: {str(e)}") from e
 
     # ================================================================
     # EXCEL EXPORTS
@@ -712,7 +737,12 @@ class ExportService:
             return metadata
             
         except Exception as e:
-            raise ExportError(f"Excel export failed: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="ExportService.export_transactions_excel",
+                user_id=self.user_id
+            )
+            raise ExportError(f"Excel export failed: {str(e)}") from e
     
     def export_accounts_excel(
         self,
@@ -789,7 +819,12 @@ class ExportService:
             return metadata
             
         except Exception as e:
-            raise ExportError(f"Account Excel export failed: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="ExportService.export_accounts_excel",
+                user_id=self.user_id
+            )
+            raise ExportError(f"Account Excel export failed: {str(e)}") from e
     
     def export_monthly_report_excel(
         self,
@@ -883,7 +918,12 @@ class ExportService:
             return metadata
             
         except Exception as e:
-            raise ExportError(f"Monthly Excel report failed: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="ExportService.export_monthly_report_excel",
+                user_id=self.user_id
+            )
+            raise ExportError(f"Monthly Excel report failed: {str(e)}") from e
     
     # ================================================================
     # SPECIALIZED REPORTS
@@ -942,8 +982,13 @@ class ExportService:
             return results if len(results) > 1 else results[0]
             
         except Exception as e:
-            raise ExportError(f"Monthly report generation failed: {str(e)}")
-    
+            error_logger.log_error(
+                e,
+                location="ExportService.export_monthly_report",
+                user_id=self.user_id
+            )
+            raise ExportError(f"Monthly report generation failed: {str(e)}") from e
+
     def export_weekly_report(
         self,
         year: int,
@@ -994,8 +1039,13 @@ class ExportService:
             return results if len(results) > 1 else results[0]
             
         except Exception as e:
-            raise ExportError(f"Weekly report generation failed: {str(e)}")
-    
+            error_logger.log_error(
+                e,
+                location="ExportService.export_weekly_report",
+                user_id=self.user_id
+            )
+            raise ExportError(f"Weekly report generation failed: {str(e)}") from e
+
     def export_daily_report(
         self,
         target_date: Union[str, date],
@@ -1043,7 +1093,12 @@ class ExportService:
             return results if len(results) > 1 else results[0]
             
         except Exception as e:
-            raise ExportError(f"Daily report generation failed: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="ExportService.export_daily_report",
+                user_id=self.user_id
+            )
+            raise ExportError(f"Daily report generation failed: {str(e)}") from e
     
     def export_category_analysis(
         self,
@@ -1094,8 +1149,13 @@ class ExportService:
             return results if len(results) > 1 else results[0]
             
         except Exception as e:
-            raise ExportError(f"Category analysis generation failed: {str(e)}")
-    
+            error_logger.log_error(
+                e,
+                location="ExportService.export_category_analysis",
+                user_id=self.user_id
+            )
+            raise ExportError(f"Category analysis generation failed: {str(e)}") from e
+
     # ================================================================
     # HELPER METHODS
     # ================================================================

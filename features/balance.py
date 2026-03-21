@@ -6,8 +6,9 @@ from decimal import Decimal
 import mysql.connector
 import json
 
-# Import your existing models
+# Import your existing models and utilities
 from models.account_model import AccountModel, AccountNotFoundError, AccountValidationError
+from core.utils import DatabaseError, ValidationError, error_logger
 
 
 # ==========================
@@ -18,17 +19,17 @@ class BalanceError(Exception):
     pass
 
 
-class InsufficientFundsError(BalanceError):
+class InsufficientFundsError(ValidationError):
     """Raised when account has insufficient funds for operation"""
     pass
 
 
-class BalanceValidationError(BalanceError):
+class BalanceValidationError(ValidationError):
     """Raised when balance validation fails"""
     pass
 
 
-class BalanceDatabaseError(BalanceError):
+class BalanceDatabaseError(DatabaseError):
     """Raised when database operations fail"""
     pass
 
@@ -93,19 +94,24 @@ class BalanceService:
         except mysql.connector.Error as e:
             try:
                 self.conn.rollback()
-            except:
+            except Exception:
                 pass
-            raise BalanceDatabaseError(f"Balance DB Error: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="BalanceService._execute",
+                user_id=self.user_id,
+            )
+            raise BalanceDatabaseError(f"Balance DB Error: {str(e)}") from e
     
     def _validate_account_active(self, account_id: int) -> Dict[str, Any]:
         """Ensure account exists and is active"""
         try:
             account = self.account_model.get_account(account_id)
         except AccountNotFoundError:
-            raise BalanceValidationError(f"Account {account_id} not found")
+            raise BalanceValidationError(f"Account {account_id} not found", field="account_id")
         
         if not account.get("is_active"):
-            raise BalanceValidationError(f"Account {account_id} is not active")
+            raise BalanceValidationError(f"Account {account_id} is not active", field="is_active")
         
         return account
 
@@ -141,7 +147,8 @@ class BalanceService:
         if not allow_overdraft and current_balance < amount:
             raise InsufficientFundsError(
                 f"Insufficient funds in account {account_id}...You are Broke :( "
-                f"Required: {amount}, Available: {current_balance}"
+                f"Required: {amount}, Available: {current_balance}", 
+                field="balance"
             )
         
     # ================================================================
@@ -213,7 +220,8 @@ class BalanceService:
         """Apply transfer transaction between two accounts"""
         # Validate not same account
         if source_account_id == dest_account_id:
-            raise BalanceValidationError("Cannot transfer to the same account")
+            raise BalanceValidationError("Cannot transfer to the same account", 
+                                         field="destination_account_id",)
         
         
         # Check sufficient funds in source

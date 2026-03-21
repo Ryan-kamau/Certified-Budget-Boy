@@ -23,13 +23,15 @@ from typing import Optional, Dict, Any, List, Tuple, Union
 from datetime import datetime, date
 from decimal import Decimal
 from dataclasses import dataclass, field
+from cycler import V
 import mysql.connector
 
 # Import your existing models
 from models.transactions_model import TransactionModel, TransactionError
 from models.category_model import CategoryModel, CategoryError
 from models.account_model import AccountModel, AccountError
-from features.recurring import RecurringModel, RecurringError
+from features.recurring import RecurringModel
+from core.utils import DatabaseError, ValidationError, error_logger
 
 # Import utilities
 from core.utils import (
@@ -147,12 +149,12 @@ class RecurringSearchRequest:
 # ================================================================
 # Custom Exceptions
 # ================================================================
-class SearchError(Exception):
+class SearchError(DatabaseError):
     """Base exception for search operations"""
     pass
 
 
-class SearchValidationError(SearchError):
+class SearchValidationError(ValidationError):
     """Raised when search parameters are invalid"""
     pass
 
@@ -747,7 +749,13 @@ class SearchService:
                 self.conn.rollback()
             except:
                 pass
-            raise SearchError(f"Database error: {str(e)}")
+            error_logger.log_error(
+                e,
+                location="SearchService._execute",
+                user_id=self.user_id,
+            )
+            raise SearchError(f"Database error: {str(e)}") from e
+ 
     
     def _get_tenant_filter(self, alias: str, global_view: bool) -> Optional[str]:
         """Generate tenant filter clause."""
