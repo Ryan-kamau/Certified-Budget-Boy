@@ -145,11 +145,19 @@ class BalanceService:
         current_balance = float(account["balance"])
         
         if not allow_overdraft and current_balance < amount:
-            raise InsufficientFundsError(
-                f"Insufficient funds in account {account_id}...You are Broke :( "
-                f"Required: {amount}, Available: {current_balance}", 
-                field="balance"
+            exc = InsufficientFundsError(
+            f"Insufficient funds in account {account_id}. "
+            f"Required: {amount}, Available: {current_balance}",
+            field="balance",
             )
+            error_logger.log_error(
+                exc,
+                location="BalanceService._check_sufficient_funds",
+                user_id=self.user_id,
+                extra=f"account_id={account_id}",
+                include_traceback=False,   # expected business rule, no stack needed
+            )
+            raise exc
         
     # ================================================================
     # TRANSACTION TYPE HANDLERS
@@ -286,8 +294,17 @@ class BalanceService:
         params = (new_balance, account_id, self.user_id)
         result = self._execute(query, params)
         if result == 0:
-            raise BalanceDatabaseError(f"Failed to update balance for account {account_id}")
-
+            exc = BalanceDatabaseError(
+                f"Failed to update balance for account {account_id}"
+            )
+            error_logger.log_error(
+                exc,
+                location="BalanceService._update_account_balance",
+                user_id=self.user_id,
+                extra=f"account_id={account_id} new_balance={new_balance}",
+                include_traceback=False,
+            )
+            raise exc
     
     def _reverse_transaction(self, transaction_id: int, source:str, transaction_data: Dict[str, Any]) -> Dict[str, Any]:
         """Reverse a transaction's balance effects"""
@@ -527,6 +544,13 @@ class BalanceService:
                     result = self.rebuild_account_balance(account["account_id"])
                     results.append(result)
                 except Exception as e:
+                    error_logger.log_error(
+                        e,
+                        location="BalanceService.rebuild_all_balances",
+                        user_id=self.user_id,
+                        extra=f"account_id={account['account_id']}",
+                        include_traceback=False,
+                    )
                     results.append({
                         "account_id": account["account_id"],
                         "error": str(e)

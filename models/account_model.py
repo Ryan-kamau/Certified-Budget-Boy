@@ -127,7 +127,16 @@ class AccountModel:
         changed_json = json.dumps(changed_fields, default=str) if changed_fields else None
 
         params = (account_id, self.user["user_id"], action, source, transaction_id, old_balance, new_balance, old_json, new_json, changed_json)
-        self._execute(query, params)
+        try:
+            self._execute(query, params)
+        except AccountDataBaseError as e:
+            error_logger.log_error(
+                e,
+                location="AccountModel._audit_logs",
+                user_id=self.user.get("user_id"),
+                extra=f"action={action} account_id={account_id}",
+                include_traceback=False,
+            )
     
     def _build_account(self, row: Dict[str, Any]) -> Accounts:
         # Convert DB row keys into appropriate types if needed
@@ -385,6 +394,15 @@ class AccountModel:
         rows = self._execute(query, tuple(params), fetchone=True)
 
         if not rows:
-            raise AccountDataBaseError(
-                f"Account {account_id} is not accessible to user {self.user["username"]}"
+            exc = AccountDataBaseError(
+                    f"Account {account_id} is not accessible to user "
+                    f"{self.user['username']}"
+                )
+            error_logger.log_error(
+                exc,
+                location="AccountModel.assert_account_access",
+                user_id=self.user.get("user_id"),
+                extra=f"account_id={account_id}",
+                include_traceback=False,  # ownership failure — message is clear
             )
+            raise exc

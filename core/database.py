@@ -46,7 +46,8 @@ class DatabaseConnection:
             error_logger.log_error(
                 e,
                 location="DatabaseConnection.get_connection",
-                extra="host=" + str(db_config.get("host", "unknown")),
+                extra="host=" + str(db_config.get("host", "unknown")) +
+                      ", database=" + str(db_config.get("database", "unknown")),
             )
             print(f"❌ Error connecting to MySQL: {e}")
             self.connection =  None

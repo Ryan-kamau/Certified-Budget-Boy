@@ -812,9 +812,15 @@ def _add_transaction(ctx: AppCtx) -> None:
         is_global=0,
     )
  
-    if result.get("transaction_id") or result.get("success"):
+    if result.get("transaction_id"):
         tx_id = result.get("transaction_id") or result.get("transaction", {}).get("transaction_id")
         print_success(f"Transaction recorded! ID: [bold cyan]#{tx_id}[/bold cyan]")
+        print_detail_panel(result,
+                           title= f"Transaction #{tx_id}",
+                           currency_keys=["amount"],
+                           date_keys=["transaction_date"],
+            )
+
     else:
         print_result(result)
     pause()

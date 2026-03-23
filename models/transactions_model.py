@@ -423,9 +423,16 @@ class TransactionModel:
                 "DELETE FROM transactions WHERE transaction_id = %s",
                 (new_id,)
             )
+            error_logger.log_error(
+                e,
+                location="TransactionModel.create_transaction",
+                user_id=self.user_id,
+                extra=f"transaction rolled back, new_id={new_id}",
+                include_traceback=False,
+            )
             raise TransactionValidationError(
                 f"Transaction CREATED and DELETED, BUT BALANCE UPDATE FAILED: {str(e)}"
-            )
+            ) from e
     
         self._audit_log(new_id, action="TRANSACTION_CREATED",
                         new_values={
@@ -604,9 +611,16 @@ class TransactionModel:
                     transaction_data=old_trans
                 )
             except Exception as e:
+                error_logger.log_error(
+                    e,
+                    location="TransactionModel.update_transaction.reverse_old",
+                    user_id=self.user_id,
+                    extra=f"transaction_id={transaction_id}",
+                    include_traceback=False,
+                )
                 raise TransactionValidationError(
                     f"Failed to reverse old balance: {str(e)}"
-                )
+                ) from e
         
         # Apply new transaction's balance effects
         if affects_balance and self.balance_service:
@@ -623,24 +637,24 @@ class TransactionModel:
                     destination_account_id=updated_trans.get("destination_account_id"),
                     allow_overdraft=updates.get("allow_overdraft", False)
                 )
-            except Exception as e:
-                # Try to reapply old balance if new one fails
-                try:
-                    self.balance_service.apply_transaction_change(
-                        transaction_id=transaction_id,
-                        transaction_type=old_trans["transaction_type"],
-                        amount=float(old_trans["amount"]),
-                        account_id=old_trans.get("account_id"),
-                        source_account_id=old_trans.get("source_account_id"),
-                        destination_account_id=old_trans.get("destination_account_id"),
-                        allow_overdraft=True
+            except Exception as restore_exc:
+                    error_logger.log_error(
+                        restore_exc,
+                        location="TransactionModel.update_transaction.restore_old_balance",
+                        user_id=self.user_id,
+                        extra=f"transaction_id={transaction_id} — balance may be inconsistent",
+                        include_traceback=False,
                     )
-                except:
-                    pass
-                
-                raise TransactionValidationError(
-                    f"Transaction updated but balance update failed: {str(e)}"
-                )
+            error_logger.log_error(
+                e,
+                location="TransactionModel.update_transaction.apply_new_balance",
+                user_id=self.user_id,
+                extra=f"transaction_id={transaction_id}",
+                include_traceback=False,
+            )
+            raise TransactionValidationError(
+                f"Transaction updated but balance update failed: {str(e)}"
+            ) from e
         
         self._audit_log(transaction_id, action="TRANSACTION_UPDATED", old_values=old_trans, 
                        new_values=updates, changed_fields=list(updates.keys()))
@@ -770,9 +784,16 @@ class TransactionModel:
                 source_account_id=tx.get("source_account_id"),
                 destination_account_id=tx.get("destination_account_id"),
                 allow_overdraft=False            )
+            error_logger.log_error(
+                e,
+                location="TransactionModel.delete_transaction",
+                user_id=self.user_id,
+                extra=f"transaction_id={transaction_id} balance reverse failed",
+                include_traceback=False,
+            )
             raise TransactionValidationError(
                 f"Failed to reverse balance on delete: {str(e)}"
-            )
+            ) from e
         
 
         if recursive:
@@ -788,6 +809,22 @@ class TransactionModel:
                         transaction_data=child_data
                     )
                 except Exception as e:
+                    self.balance_service.apply_transaction_change(
+                        transaction_id=child.transaction_id,
+                        transaction_type=child_data["transaction_type"],
+                        amount=float(child_data["amount"]),
+                        account_id=child_data.get("account_id"),
+                        source_account_id=child_data.get("source_account_id"),
+                        destination_account_id=child_data.get("destination_account_id"),
+                        allow_overdraft=False
+                    )
+                    error_logger.log_error(
+                        e,
+                        location="TransactionModel.delete_transaction.reverse_child",
+                        user_id=self.user_id,
+                        extra=f"transaction_id={child.transaction_id} balance reverse failed",
+                        include_traceback=False,
+                    )
                     raise TransactionValidationError(
                             f"Failed to reverse balance for child transaction {child.transaction_id}: {e}"
                         )
@@ -850,16 +887,30 @@ class TransactionModel:
                     changed_fields=["is_deleted"],
                 )
         except Exception as e:
-            self.balance_service.reverse_transaction_change(
-                transaction_id=transaction_id,
-                source="RESTORE_FAILED",
-                transaction_data=tx
+            error_logger.log_error(
+                e,
+                location="TransactionModel.restore_transaction",
+                user_id=self.user_id,
+                extra=f"transaction_id={transaction_id}",
+                include_traceback=False,
             )
+            try:
+                self.balance_service.reverse_transaction_change(
+                    transaction_id=transaction_id,
+                    source="RESTORE_FAILED",
+                    transaction_data=tx
+                )
+            except Exception as reverse_exc:
+                error_logger.log_error(
+                    reverse_exc,
+                    location="TransactionModel.restore_transaction.reverse_cleanup",
+                    user_id=self.user_id,
+                    extra=f"transaction_id={transaction_id} — cleanup also failed",
+                    include_traceback=False,
+                )
             raise TransactionValidationError(
-                f"Transaction restoration Error...Either Balance or Child Restoration Failed: {str(e)}"
-            )
-
-        return {"success": True, "message": f"Transaction {transaction_id} restored successfully."}
+                f"Transaction restoration Error: {str(e)}"
+            ) from e
     
     def view_audit_logs(
         self,

@@ -146,10 +146,18 @@ class RecurringModel:
 
         params = (self.user.get("user_id"), "recurring_transactions", target_id, action,
                   json.dumps(new_values or {}, default=str))
-        affected = self._execute(sql, params)
-
-        if not affected:
-            raise RecurringValidationError("Audit ot completed")
+        try:
+            affected = self._execute(sql, params)
+            if not affected:
+                raise RecurringValidationError("Audit not completed")
+        except RecurringValidationError as e:
+            error_logger.log_error(
+                e,
+                location="RecurringModel._audit_log",
+                user_id=self.user.get("user_id"),
+                extra=f"action={action} target_id={target_id}",
+                include_traceback=False,
+            )
         
     def _build_recurring(self, row: Dict[str, Any]) -> RecurringTransaction:
         # Convert DB row keys into appropriate types if needed
@@ -801,9 +809,15 @@ class RecurringModel:
                 )
 
             except Exception as exc:
-                # Attempt to write failed history and update status
+                rec_id = row.get("recurring_id") if isinstance(row, dict) else None
+                error_logger.log_error(
+                    exc,
+                    location="RecurringModel.run_due",
+                    user_id=self.user.get("user_id"),
+                    extra=f"recurring_id={rec_id}",
+                    include_traceback=False,
+                )
                 try:
-                    rec_id = row.get("recurring_id") if isinstance(row, dict) else None
                     self._record_history(
                         self.user["user_id"],
                         recurring_id=rec_id,
@@ -814,13 +828,17 @@ class RecurringModel:
                         posted_transaction_id=None,
                         message=str(exc)
                     )
-                except Exception:
-                    pass
-
-                # update recurring last_run_status to failed if possible
+                except Exception as history_exc:
+                    error_logger.log_error(
+                        history_exc,
+                        location="RecurringModel.run_due._record_history",
+                        user_id=self.user.get("user_id"),
+                        extra=f"recurring_id={rec_id} — history write also failed",
+                        include_traceback=False,
+                    )
                 try:
                     if isinstance(row, dict) and row.get("recurring_id"):
-                        self.update(row.get("recurring_id"), last_run_status= "failed")
+                        self.update(row.get("recurring_id"), last_run_status="failed")
                 except Exception:
                     pass
 

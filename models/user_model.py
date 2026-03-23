@@ -1,6 +1,7 @@
 #User_model
 from typing import Optional, Dict, List, Any
 from core.database import DatabaseConnection
+from core.utils import error_logger
 from mysql.connector import Error
 import bcrypt
 
@@ -125,6 +126,12 @@ class UserModel:
 
         except Exception as e:
             self.conn.rollback()
+            error_logger.log_error(
+                e,
+                location="UserModel.register",
+                user_id=None,   # not logged in yet during registration
+                extra=f"username={username}",
+            )
             return {"success": False, "message": f"Database error: {e}", "user_id": None}
 
 
@@ -154,9 +161,19 @@ class UserModel:
             "user": self.current_user,
             }
         except Error as db_err:
+            error_logger.log_error(
+                db_err,
+                location="UserModel.authenticate",
+                user_id=None,
+            )   
             return {"success": False, "message": f"Database error: {db_err}"}
 
         except Exception as e:
+            error_logger.log_error(
+                e,
+                location="UserModel.authenticate",
+                user_id=None,
+            )
             return {"success": False, "message": f"Unexpected error: {e}"}
 
 
@@ -181,6 +198,11 @@ class UserModel:
             
             except Exception as e:
                 self.conn.rollback()
+                error_logger.log_error(
+                    e,
+                    location="UserModel.promote_to_admin",
+                    user_id=None,
+                )
                 return {"success": False, "message": f"Error: {e}"}
 
     def demote_to_user(self, username) -> Dict[str, Any]:
@@ -195,6 +217,11 @@ class UserModel:
                 }
             except Exception as e:
                 self.conn.rollback()
+                error_logger.log_error(
+                    e,
+                    location="UserModel.demote_to_user",
+                    user_id=None,
+                )
                 return {"success": False, "message": f"Error: {e}"}
 
     def deactivate_user(self, username: str) -> Dict[str, Any]:
@@ -210,6 +237,11 @@ class UserModel:
                 }
             except Exception as e:
                 self.conn.rollback()
+                error_logger.log_error(
+                    e,
+                    location="UserModel.deactivate_user",
+                    user_id=None,
+                )
                 return {"success": False, "message": f"Error: {e}"}
 
 
@@ -225,6 +257,11 @@ class UserModel:
                 } 
             except Exception as e:
                 self.conn.rollback()
+                error_logger.log_error(
+                    e,
+                    location="UserModel.activate_user",
+                    user_id=None,
+                )
                 return {"success": False, "message": f"Error: {e}"}
 
     def delete_user(self, username: str) -> bool:
@@ -236,6 +273,11 @@ class UserModel:
                 return cur.rowcount > 0
             except Exception as e:
                 self.conn.rollback()
+                error_logger.log_error(
+                    e,
+                    location="UserModel.delete_user",
+                    user_id=None,
+                )
                 return {"success": False, "message": f"Error: {e}"}
 
     def list_users(self) -> Dict[str, Any]:
@@ -247,6 +289,11 @@ class UserModel:
                 users = cur.fetchall()
                 return {"success": True, "users": users}
         except Exception as e:
+            error_logger.log_error(
+                e,
+                location="UserModel.list_users",
+                user_id=None,
+            )
             return {"success": False, "message": f"Error: {e}"}
 
     # ==========================================================
@@ -278,6 +325,11 @@ class UserModel:
 
         except Exception as e:
             self.conn.rollback()
+            error_logger.log_error(
+                e,
+                location="UserModel.change_password",
+                user_id=self.current_user.get("user_id"),
+            )
             return {"success": False, "message": f"Error: {e}"}
 
     def change_security_answer(self, new_answer: str) -> Dict[str, Any]:
@@ -300,6 +352,11 @@ class UserModel:
 
         except Exception as e:
             self.conn.rollback()
+            error_logger.log_error(
+                e,
+                location="UserModel.change_security_answer",
+                user_id=self.current_user.get("user_id"),
+            )
             return {"success": False, "message": f"Error: {e}"}
 
     def get_all_user_details(self, username: str, *, password: Optional[str], security_answer: Optional[str]) -> Dict[str, Any]:
@@ -345,9 +402,19 @@ class UserModel:
             }
 
         except PermissionError as e:
+            error_logger.log_error(
+                e,
+                location="UserModel.get_all_user_details",
+                user_id=self.current_user.get("user_id"),
+            )
             return {"success": False, "message": str(e)}
 
         except Exception as e:
+            error_logger.log_error(
+                e,
+                location="UserModel.get_all_user_details",
+                user_id=self.current_user.get("user_id"),
+            )
             return {"success": False, "message": f"Error retrieving user details: {e}"}
 
     def get_security_question(self) -> str:
@@ -380,6 +447,11 @@ class UserModel:
 
         except Exception as e:
             self.conn.rollback()
+            error_logger.log_error(
+                e,
+                location="UserModel.change_security_question",
+                user_id=self.current_user.get("user_id"),
+            )
             return {"success": False, "message": f"Error: {e}"}
 
     # ==========================================================
