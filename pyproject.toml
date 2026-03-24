@@ -1,0 +1,92 @@
+# pyproject.toml
+# ============================================================
+#  FinTrack — Package Metadata & Build Configuration
+#  Modern Python packaging (PEP 517/518)
+#
+#  Install editable (dev):   pip install -e ".[dev]"
+#  Build wheel:              python -m build
+#  Build exe:                pyinstaller budget_tracker.spec
+# ============================================================
+
+[build-system]
+requires      = ["setuptools>=72", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+ 
+ 
+# ── Project metadata ─────────────────────────────────────────────────────────
+[project]
+name            = "fintrack"
+version         = "1.0.0"
+description     = "FinTrack — Personal Finance Tracker (CLI)"
+readme          = "README.md"
+license         = { text = "MIT" }
+requires-python = ">=3.11"
+ 
+authors = [
+    { name = "Ryan Kamau", email = "kamauryan07@gmail.com" },
+]
+
+keywords = ["finance", "budget", "tracker", "cli", "personal-finance", "mysql"]
+ 
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+]
+ 
+# Runtime dependencies — mirrors requirements.txt exactly
+dependencies = [
+    "mysql-connector-python>=8.3.0",
+    "rich>=13.7.0",
+    "matplotlib>=3.8.0",
+    "openpyxl>=3.1.0",
+    "reportlab>=4.1.0",
+    "pandas>=2.2.0",
+]
+ 
+ 
+# ── CLI entry points ──────────────────────────────────────────────────────────
+# After `pip install -e .` these commands become available system-wide:
+#   fintrack       → launches main.py (the full app)
+#   fintrack-cron  → launches the standalone cron runner
+[project.scripts]
+fintrack      = "main:main"
+fintrack-cron = "Scripts.cron_runner:main"
+ 
+ 
+# ── Optional extras ───────────────────────────────────────────────────────────
+[project.optional-dependencies]
+dev = [
+    "pyinstaller>=6.6.0",    # build standalone .exe / .app
+    "pytest>=8.0.0",
+    "pytest-mock>=3.14.0",
+    "build>=1.2.0",          # python -m build
+]
+ 
+ 
+# ── Package discovery ─────────────────────────────────────────────────────────
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["core*", "models*", "features*"]
+exclude = ["tests*", "data*", "reports*", "logs*"]
+ 
+# Bundle non-Python files into the distribution
+[tool.setuptools.package-data]
+"*" = [
+    "config/config.ini.example",
+    "data/seeds.sql",
+    "*.md",
+]
+ 
+ 
+# ── Pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths   = ["tests"]
+python_files = ["test_*.py"]
+addopts     = "-v --tb=short"
