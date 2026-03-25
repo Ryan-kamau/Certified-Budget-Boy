@@ -57,6 +57,7 @@ dependencies = [
 #   fintrack-cron  → launches the standalone cron runner
 [project.scripts]
 fintrack      = "main:main"
+fintrack-setup = "scripts.db_setup:main" 
 fintrack-cron = "scripts.cron_runner:main"
  
  
@@ -73,7 +74,7 @@ dev = [
 # ── Package discovery ─────────────────────────────────────────────────────────
 [tool.setuptools.packages.find]
 where   = ["."]
-include = ["core*", "models*", "features*"]
+include = ["core*", "models*", "scripts*", "features*"]
 exclude = ["tests*", "data*", "reports*", "logs*"]
  
 # Bundle non-Python files into the distribution

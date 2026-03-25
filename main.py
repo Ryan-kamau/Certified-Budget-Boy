@@ -404,6 +404,7 @@ def menu_accounts(ctx: AppCtx) -> None:
         ("Net Worth",         "Total net worth across all accounts"),
         ("🗓️   Scheduler",          "Run, monitor & control recurring rules"),
         ("Audit Logs",        "View account audit history"),
+        ("Delete Account",     "Permanently delete an account"),
     ]
  
     while True:
@@ -471,6 +472,15 @@ def menu_accounts(ctx: AppCtx) -> None:
             # ── Update ────────────────────────────────
             elif choice == 4:
                 acc_id = ask_int("Account ID to update")
+                #print account details before updating
+                if acc_id is not None:
+                    acc = ctx.accounts.get_account(acc_id)
+                    print_detail_panel(
+                        acc,
+                        title =f"Current details for Account Number: {acc_id}",
+                        currency_keys ={"balance"},
+                        date_keys= {"created_at", "updated_at"}
+                    )
                 print_info("Leave fields blank to skip.")
                 updates = {}
                 for field, prompt_txt in [
@@ -496,14 +506,30 @@ def menu_accounts(ctx: AppCtx) -> None:
             # ── Soft Delete ───────────────────────────
             elif choice == 5:
                 acc_id = ask_int("Account ID to delete")
+                if acc_id is not None:
+                    acc = ctx.accounts.get_account(acc_id)
+                    print_detail_panel(
+                        acc,
+                        title =f"Current details for Account Number: {acc_id}",
+                        currency_keys ={"balance"},
+                        date_keys= {"created_at", "updated_at"}
+                    )
                 if ask_confirm(f"Soft-delete account #{acc_id}?"):
-                    result = ctx.accounts.soft_delete_account(acc_id)
+                    result = ctx.accounts.delete_account(acc_id, soft=True)
                     print_result(result)
                 pause()
  
             # ── Restore ───────────────────────────────
             elif choice == 6:
                 acc_id = ask_int("Account ID to restore")
+                if acc_id is not None:
+                    acc = ctx.accounts.get_account(acc_id, include_deleted=True)
+                    print_detail_panel(
+                        acc,
+                        title =f"Current details for Account Number: {acc_id}",
+                        currency_keys ={"balance"},
+                        date_keys= {"created_at", "updated_at"}
+                    )
                 result = ctx.accounts.restore_account(acc_id)
                 print_result(result)
                 pause()
@@ -546,6 +572,23 @@ def menu_accounts(ctx: AppCtx) -> None:
                     formatters={"created_at": fmt_date},
                 )
                 pause()
+
+            #Permanent Delete
+            elif choice == 10:
+                acc_id = ask_int("Account ID to permanently Delete")
+                if acc_id is not None:
+                    acc = ctx.accounts.get_account(acc_id)
+                    print_detail_panel(
+                        acc,
+                        title =f"Current details for Account Number: {acc_id}",
+                        currency_keys ={"balance"},
+                        date_keys= {"created_at", "updated_at"}
+                    )
+                if ask_confirm(f"Hard-delete account #{acc_id}?"):
+                    result = ctx.accounts.delete_account(acc_id, soft=False)
+                    print_result(result)
+                pause()
+                
  
         except BackSignal:
             pass
@@ -567,6 +610,9 @@ def menu_categories(ctx: AppCtx) -> None:
         ("Delete Category",   "Soft-delete a category"),
         ("Restore Category",  "Recover a deleted category"),
         ("Category Tree",     "View full hierarchy tree"),
+        ("Search Categories",  "Find Categories by name "),
+        ("View Category Transactions", "List Transactions Under a category"),
+        ("Delete Category",   "Permanently Delete a category"),
     ]
  
     while True:
@@ -619,6 +665,13 @@ def menu_categories(ctx: AppCtx) -> None:
  
             elif choice == 4:
                 cat_id = ask_int("Category ID to update")
+                if cat_id is not None:
+                    cate = ctx.categories.get_category(cat_id)
+                    print_detail_panel(
+                            cate,
+                            title= f"Category ID {cat_id} to be Updated",
+                            date_keys={"created_at", "updated_at"},
+                    )
                 print_info("Leave fields blank to skip.")
                 updates = {}
                 for field, prompt_txt in [
@@ -643,6 +696,14 @@ def menu_categories(ctx: AppCtx) -> None:
  
             elif choice == 5:
                 cat_id = ask_int("Category ID")
+                
+                if cat_id is not None:
+                    cate = ctx.categories.get_category(cat_id)
+                    print_detail_panel(
+                            cate,
+                            title= f"Category ID {cat_id} to be Soft Deleted",
+                            date_keys={"created_at", "updated_at"},
+                    )
                 if ask_confirm(f"Soft-delete category #{cat_id}?"):
                     result = ctx.categories.delete_category(cat_id, soft=True)
                     print_result(result)
@@ -650,6 +711,13 @@ def menu_categories(ctx: AppCtx) -> None:
  
             elif choice == 6:
                 cat_id = ask_int("Category ID to restore")
+                if cat_id is not None:
+                    cate = ctx.categories.get_category(cat_id)
+                    print_detail_panel(
+                            cate,
+                            title= f"Category ID {cat_id} to be updated",
+                            date_keys={"created_at", "updated_at"},
+                    )
                 result = ctx.categories.restore_category(cat_id)
                 print_result(result)
                 pause()
@@ -657,6 +725,58 @@ def menu_categories(ctx: AppCtx) -> None:
             elif choice == 7:
                 tree = ctx.categories.list_categories(flat=False)
                 _print_tree(tree)
+                pause()
+
+            elif choice == 8:
+                search_term = ask_str("Search term for a category")
+                cats = ctx.search_svc.search_categories(filters=CategorySearchRequest(
+                    text=TextSearchFilter(search_text=search_term)))
+                print_table(
+                    cats["results"],
+                    columns=[
+                        ("ID",     "category_id"),
+                        ("Name",   "name"),
+                        ("Description", "description"),
+                        ("Parent", "parent_id"),
+                        ("Owner", "owned_by_username"),
+                    ],
+                    title=f"Categories With {search_term}",
+                )
+                pause()
+
+            #View Category transactions
+            elif choice == 9:
+                cat_id = ask_int("Category ID for Transaction filtering: ")
+                tx = ctx.search_svc.search_transactions(
+                    filters=TransactionSearchRequest(CategoryFilter(category_ids=cat_id, 
+                                                                    include_subcategories=True)))
+                print_table(
+                    tx,
+                    columns=[
+                        ("ID",     "category_id"),
+                        ("Name",   "name"),
+                        ("Description", "description"),
+                        ("Parent", "parent_id"),
+                        ("Owner", "owned_by_username"),
+                    ],
+                    title=f"Transactions under Category ID: {cat_id}"
+                )
+                pause()
+
+            #Delete Category
+            elif choice == 10:
+                cat_id = ask_int("Category ID")
+                
+                if cat_id is not None:
+                    cate = ctx.categories.get_category(cat_id)
+                    print_detail_panel(
+                            cate,
+                            title= f"Category ID {cat_id} to be Hard Deleted",
+                            date_keys={"created_at", "updated_at"},
+                    )
+                if ask_confirm(f"Hard-delete category #{cat_id}?"):
+                    result = ctx.categories.delete_category(cat_id, soft=False)
+                    print_result(result)
                 pause()
  
         except BackSignal:
@@ -701,6 +821,7 @@ def menu_transactions(ctx: AppCtx) -> None:
         ("Delete Transaction",   "Soft-delete a transaction"),
         ("Restore Transaction",  "Recover a deleted transaction"),
         ("Transaction Audit",    "View change history"),
+        ("Hard Delete"            "Hard Delete A transaction")
     ]
  
     while True:
@@ -735,15 +856,33 @@ def menu_transactions(ctx: AppCtx) -> None:
  
             elif choice == 5:
                 tx_id = ask_int("Transaction ID")
-                hard  = ask_confirm("Hard delete? (cannot be undone)", default=False)
+                current = ctx.transactions.get_transaction(tx_id)
+                print_detail_panel(
+                    current,
+                    title=f"Current  —  Transaction #{tx_id}",
+                    currency_keys={"amount"},
+                    date_keys={"transaction_date"},
+                    style="dim",
+                )
+                soft  = ask_confirm("Soft delete? ")
+                recur = ask_confirm("Delete also its Child Transactions", default=False)
                 result = ctx.transactions.delete_transaction(
-                    tx_id, soft=not hard
+                    tx_id, soft=soft, recursive=recur
                 )
                 print_result(result)
                 pause()
  
             elif choice == 6:
                 tx_id  = ask_int("Transaction ID")
+                if tx_id is not None:
+                    current = ctx.transactions.get_transaction(tx_id)
+                    print_detail_panel(
+                        current,
+                        title=f"Current  —  Transaction #{tx_id}",
+                        currency_keys={"amount"},
+                        date_keys={"transaction_date"},
+                        style="dim",
+                    )
                 result = ctx.transactions.restore_transaction(tx_id)
                 print_result(result)
                 pause()
@@ -765,6 +904,24 @@ def menu_transactions(ctx: AppCtx) -> None:
                     formatters={"timestamp": lambda x: fmt_datetime(x),
                                 "changed_fields": lambda c: ", ".join(c) if isinstance(c, list) else str(c)[:50]},
                 )
+                pause()
+
+            elif choice == 8:
+                tx_id = ask_int("Transaction ID")
+                current = ctx.transactions.get_transaction(tx_id)
+                print_detail_panel(
+                    current,
+                    title=f"Current  —  Transaction #{tx_id}",
+                    currency_keys={"amount"},
+                    date_keys={"transaction_date"},
+                    style="dim",
+                )
+                hard  = ask_confirm("Hard delete? ")
+                recur = ask_confirm("Delete also its Child Transactions", default=False)
+                result = ctx.transactions.delete_transaction(
+                    tx_id, soft=hard, recursive=recur
+                )
+                print_result(result)
                 pause()
  
         except BackSignal:
@@ -1461,6 +1618,12 @@ def menu_recurring(ctx: AppCtx) -> None:
             elif choice == 5:
                 rid = ask_int("Recurring ID")
                 rec = ctx.recurring.get_recurring(rid)
+                print_detail_panel(
+                    rec,
+                    title=f"Recurring #{rid}",
+                    currency_keys={"amount"},
+                    date_keys={"next_due", "created_at"},
+                )
                 new_state = not rec.get("is_active", True)
                 result    = ctx.recurring.update_recurring(rid, is_active=int(new_state))
                 label     = "Activated" if new_state else "Deactivated"
@@ -1469,6 +1632,13 @@ def menu_recurring(ctx: AppCtx) -> None:
  
             elif choice == 6:
                 rid  = ask_int("Recurring ID")
+                rec  = ctx.recurring.get_recurring(rid)
+                print_detail_panel(
+                    rec,
+                    title=f"Recurring #{rid}",
+                    currency_keys={"amount"},
+                    date_keys={"next_due", "created_at"},
+                )
                 soft = ask_confirm("Soft delete?", default=True)
                 result = ctx.recurring.delete_recurring(rid, soft=soft)
                 print_result(result)
@@ -1502,6 +1672,20 @@ def menu_recurring(ctx: AppCtx) -> None:
                     if result.get("errors"):
                         for err in result["errors"]:
                             print_warning(str(err))
+                pause()
+            
+            elif choice == 9:
+                rid  = ask_int("Recurring ID")
+                rec  = ctx.recurring.get_recurring(rid)
+                print_detail_panel(
+                    rec,
+                    title=f"Recurring #{rid}",
+                    currency_keys={"amount"},
+                    date_keys={"next_due", "created_at"},
+                )
+                hard = ask_confirm("Hard delete?")
+                result = ctx.recurring.delete_recurring(rid, soft=hard)
+                print_result(result)
                 pause()
  
         except BackSignal:
