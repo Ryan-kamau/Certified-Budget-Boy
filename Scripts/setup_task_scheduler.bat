@@ -63,7 +63,7 @@ echo  FinTrack Task Scheduler Setup
 echo  ============================================================
 echo  Task name  : %TASK_NAME%
 echo  Script     : %BAT_PATH%
-echo  Schedule   : Every hour
+echo  Schedule   : Every 8 Hours, starting at 00.00
 echo  Start time : 00:00
 echo  ============================================================
 echo.
@@ -78,7 +78,7 @@ if %ERRORLEVEL% == 0 (
 REM ── Create the new task ──────────────────────────────────────────────────────
 REM
 REM  /SC HOURLY    — repeat trigger
-REM  /MO 1         — every 1 hour
+REM  /MO 8         — every 8 hours
 REM  /ST 00:00     — starting at midnight
 REM  /TR           — command to run (cmd /c lets us call a .bat)
 REM  /RL HIGHEST   — run at highest available privilege level
@@ -87,8 +87,7 @@ REM
 
 schtasks /Create ^
     /TN "%TASK_NAME%" ^
-    /SC HOURLY ^
-    /MO 8 ^
+    /SC DAILY ^
     /ST 00:00 ^
     /TR "cmd /c \"%BAT_PATH%\"" ^
     /RL HIGHEST ^
@@ -114,6 +113,8 @@ REM Patch: add RestartOnFailure (3 retries, 5-minute interval)
 REM We use PowerShell for the XML edit since batch has no XML support.
 powershell -NoProfile -Command ^
     "(Get-Content '%XML_TMP%') ^
+     -replace '<Triggers>', ^
+     '<Triggers><CalendarTrigger><StartBoundary>2025-01-01T00:00:00</StartBoundary><Enabled>true</Enabled><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay><Repetition><Interval>PT8H</Interval><Duration>P1D</Duration></Repetition></CalendarTrigger>' ^
      -replace '</Settings>', ^
      '<RestartOnFailure><Interval>PT5M</Interval><Count>3</Count></RestartOnFailure></Settings>' ^
      | Set-Content '%XML_TMP%'"

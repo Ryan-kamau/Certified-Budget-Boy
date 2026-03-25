@@ -57,7 +57,7 @@ dependencies = [
 #   fintrack-cron  → launches the standalone cron runner
 [project.scripts]
 fintrack      = "main:main"
-fintrack-cron = "Scripts.cron_runner:main"
+fintrack-cron = "scripts.cron_runner:main"
  
  
 # ── Optional extras ───────────────────────────────────────────────────────────
