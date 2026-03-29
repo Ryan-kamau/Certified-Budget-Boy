@@ -43,8 +43,8 @@ import numpy as np
 import mysql.connector
 from pyparsing import line
 
-from models.analytics_model import AnalyticsModel
-from features.balance import BalanceService
+from fintrack.models.analytics_model import AnalyticsModel
+from fintrack.features.balance import BalanceService
 
 # ── Global style ──────────────────────────────────────────────────────────────
 plt.rcParams.update({

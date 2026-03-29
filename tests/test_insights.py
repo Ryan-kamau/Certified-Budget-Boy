@@ -15,9 +15,9 @@ from datetime import datetime, date, timedelta
 # ============================================================================
 # TODO: UPDATE THESE IMPORTS BASED ON YOUR PROJECT STRUCTURE
 # ============================================================================
-from core.database import DatabaseConnection
-from models.user_model import UserModel
-from features.insights import (
+from fintrack.core.database import DatabaseConnection
+from fintrack.models.user_model import UserModel
+from fintrack.features.insights import (
     InsightsEngine,
     InsightCategory,
     Severity,
@@ -118,7 +118,7 @@ def main():
     username = input("Username: ").strip()
     password = input("Password: ").strip()
 
-    from models.user_model import UserModel
+    from fintrack.models.user_model import UserModel
     um   = UserModel(conn)
     auth = um.authenticate(username, password)
 

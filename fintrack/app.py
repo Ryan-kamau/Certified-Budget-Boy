@@ -28,8 +28,8 @@ from rich.align import Align
 console = Console()
  
 # ── Project core ─────────────────────────────────────────
-from core.database import DatabaseConnection
-from core.cli_helpers import (
+from fintrack.core.database import DatabaseConnection
+from fintrack.core.cli_helpers import (
     # Signals
     BackSignal, ExitSignal, LogoutSignal,
     # UI
@@ -44,9 +44,9 @@ from core.cli_helpers import (
     # Helpers
     run_app,
 )
-from core.scheduler import Scheduler
-from core.utils import ValidationPatterns
-from core.utils import (
+from fintrack.core.scheduler import Scheduler
+from fintrack.core.utils import ValidationPatterns
+from fintrack.core.utils import (
     BudgetTrackerError,
     DatabaseError,
     ValidationError,
@@ -56,22 +56,22 @@ from core.utils import (
 )
  
 # ── Models ───────────────────────────────────────────────
-from models.user_model        import UserModel
-from models.account_model     import AccountModel
-from models.category_model    import CategoryModel
-from models.transactions_model import TransactionModel
-from models.analytics_model   import AnalyticsModel
+from fintrack.models.user_model        import UserModel
+from fintrack.models.account_model     import AccountModel
+from fintrack.models.category_model    import CategoryModel
+from fintrack.models.transactions_model import TransactionModel
+from fintrack.models.analytics_model   import AnalyticsModel
  
 # ── Features ─────────────────────────────────────────────
-from features.balance   import BalanceService
-from features.goals     import GoalService
-from features.charts    import FinanceCharts
-from features.dashboard import Dashboard
-from features.search    import SearchService
-from features.recurring import RecurringModel
-from features.export_reports import ExportService, ExportConfig, ExportMetadata
-from  features.insights import InsightsEngine
-from features.search import (
+from fintrack.features.balance   import BalanceService
+from fintrack.features.goals     import GoalService
+from fintrack.features.charts    import FinanceCharts
+from fintrack.features.dashboard import Dashboard
+from fintrack.features.search    import SearchService
+from fintrack.features.recurring import RecurringModel
+from fintrack.features.export_reports import ExportService, ExportConfig, ExportMetadata
+from fintrack.features.insights import InsightsEngine
+from fintrack.features.search import (
         TransactionSearchRequest, DateFilter, AmountFilter, TextSearchFilter,
         TransactionTypeFilter, SortOptions, CategoryFilter, CategorySearchRequest, AccountFilter, Pagination)
 
@@ -1882,7 +1882,7 @@ def menu_search(ctx: AppCtx) -> None:
                 text   = ask_str("Category name to search")
                 category = ask_int("Category ID to filter by", required=False)
                 include_children = ask_confirm("Include subcategories?", default=True)
-                from features.search import CategorySearchRequest
+                from fintrack.features.search import CategorySearchRequest
                 req    = CategorySearchRequest(text=TextSearchFilter(search_text=text), 
                                                category= CategoryFilter(category_ids=[category], 
                                                                         include_children=include_children) if category else CategoryFilter())
@@ -1903,7 +1903,7 @@ def menu_search(ctx: AppCtx) -> None:
                 pause()
  
             elif choice == 3:
-                from features.search import AccountSearchRequest
+                from fintrack.features.search import AccountSearchRequest
                 acc_id   = ask_int("Account ID to search for", required=False)
                 acc_type = ask_choice("Account type", ACCOUNT_TYPES, required=False)
                 req      = AccountSearchRequest(AccountFilter(account_ids=[acc_id] if acc_id else None,
@@ -2795,7 +2795,7 @@ def menu_exports(ctx: AppCtx) -> None:
             # ── 4. Accounts → CSV ────────────────────────────
             elif choice == 4:
                 print_section("📄  Accounts → CSV")
-                from features.search import AccountSearchRequest, StatusFilter
+                from fintrack.features.search import AccountSearchRequest, StatusFilter
                 active_only = ask_confirm("Active accounts only?", default=True)
                 filters = AccountSearchRequest(
                     status=StatusFilter(active_only=active_only)
@@ -2807,7 +2807,7 @@ def menu_exports(ctx: AppCtx) -> None:
             # ── 5. Accounts → PDF ────────────────────────────
             elif choice == 5:
                 print_section("📑  Accounts → PDF")
-                from features.search import AccountSearchRequest, StatusFilter
+                from fintrack.features.search import AccountSearchRequest, StatusFilter
                 active_only = ask_confirm("Active accounts only?", default=True)
                 title   = ask_str("Report title", default="Account Summary Report")
                 filters = AccountSearchRequest(
@@ -2820,7 +2820,7 @@ def menu_exports(ctx: AppCtx) -> None:
             # ── 6. Accounts → Excel ──────────────────────────
             elif choice == 6:
                 print_section("📊  Accounts → Excel")
-                from features.search import AccountSearchRequest, StatusFilter
+                from fintrack.features.search import AccountSearchRequest, StatusFilter
                 active_only = ask_confirm("Active accounts only?", default=True)
                 filters = AccountSearchRequest(
                     status=StatusFilter(active_only=active_only)
@@ -2832,7 +2832,7 @@ def menu_exports(ctx: AppCtx) -> None:
             # ── 7. Categories → CSV ──────────────────────────
             elif choice == 7:
                 print_section("📄  Categories → CSV")
-                from features.search import CategorySearchRequest
+                from fintrack.features.search import CategorySearchRequest
                 name_filter = ask_str("Filter by name (optional)", required=False)
                 filters = CategorySearchRequest(name=name_filter)
                 meta = ctx.exports.export_categories_csv(filters)

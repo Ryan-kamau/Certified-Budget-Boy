@@ -30,7 +30,7 @@ import time
 import sys
 from datetime import date, datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
-from core.utils import DateRangeValidator, ValidationPatterns, ValidationError
+from fintrack.core.utils import DateRangeValidator, ValidationPatterns, ValidationError
 
 from rich import box
 from rich.align import Align

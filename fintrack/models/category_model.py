@@ -41,7 +41,7 @@ from typing import Any, Dict, Optional, List, Tuple
 import mysql.connector
 from datetime import datetime
 import json
-from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
+from fintrack.core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 
 # ============================================================
 # Exceptions

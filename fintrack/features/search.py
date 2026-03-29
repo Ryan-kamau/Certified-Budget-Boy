@@ -27,14 +27,14 @@ from cycler import V
 import mysql.connector
 
 # Import your existing models
-from models.transactions_model import TransactionModel, TransactionError
-from models.category_model import CategoryModel, CategoryError
-from models.account_model import AccountModel, AccountError
-from features.recurring import RecurringModel
-from core.utils import DatabaseError, ValidationError, error_logger
+from fintrack.models.transactions_model import TransactionModel, TransactionError
+from fintrack.models.category_model import CategoryModel, CategoryError
+from fintrack.models.account_model import AccountModel, AccountError
+from fintrack.features.recurring import RecurringModel
+from fintrack.core.utils import DatabaseError, ValidationError, error_logger
 
 # Import utilities
-from core.utils import (
+from fintrack.core.utils import (
     DateRangeValidator,
     AmountRangeValidator,
     QueryBuilder,

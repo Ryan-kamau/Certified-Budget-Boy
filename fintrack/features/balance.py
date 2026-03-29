@@ -7,8 +7,8 @@ import mysql.connector
 import json
 
 # Import your existing models and utilities
-from models.account_model import AccountModel, AccountNotFoundError, AccountValidationError
-from core.utils import DatabaseError, ValidationError, error_logger
+from fintrack.models.account_model import AccountModel, AccountNotFoundError, AccountValidationError
+from fintrack.core.utils import DatabaseError, ValidationError, error_logger
 
 
 # ==========================

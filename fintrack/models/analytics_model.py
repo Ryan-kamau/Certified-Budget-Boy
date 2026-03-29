@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import date, datetime
 from decimal import Decimal
-from core.utils import DatabaseError, ValidationError, error_logger
+from fintrack.core.utils import DatabaseError, ValidationError, error_logger
 
 import mysql.connector
 

@@ -71,10 +71,10 @@ dim()     { echo -e "${C_DIM}$*${C_RESET}"; }
 
 APP_NAME="FinTrack"
 APP_VERSION="1.0.0"
-ENTRY_POINT="main.py"
-SPEC_FILE="budget_tracker.spec"
+ENTRY_POINT="fintrack/main.py"
+SPEC_FILE="packaging/budget_tracker.spec"
 VENV_DIR=".venv"
-MIN_PYTHON="3.9"
+MIN_PYTHON="3.10"
 
 # Python interpreter to use (override with: PYTHON=/path/to/python3.11 ./build.sh)
 PYTHON="${PYTHON:-}"
@@ -348,11 +348,9 @@ step "Step 5 — Generating requirements.txt"
 REQUIREMENTS_FILE="requirements.txt"
 
 if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
-    info "Generating $REQUIREMENTS_FILE from current venv …"
-    run "$VENV_PYTHON" -m pip freeze > "$REQUIREMENTS_FILE"
-    success "Created $REQUIREMENTS_FILE"
-else
-    dim "  $REQUIREMENTS_FILE already exists — skipping (run with --clean to regenerate)"
+    info "Generating clean requirements.txt …"
+    printf "%s\n" "${DEPENDENCIES[@]}" > "$REQUIREMENTS_FILE"
+    success "Created clean requirements.txt"
 fi
 
 
@@ -373,7 +371,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.backends.legacy:build"
 
 [project]
-name = "budget-tracker"
+name = "fintrack"
 version = "${APP_VERSION}"
 description = "FinTrack — Personal Finance Tracker"
 requires-python = ">=${MIN_PYTHON}"
@@ -381,10 +379,13 @@ readme = "README.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "models*", "features*", "scripts*"]
+include = ["fintrack*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.ini.template", "templates/*"]
+fintrack = ["config/*.template.ini"]
+
+[tool.setuptools.data-files]
+"scripts" = ["scripts/*.bat"]
 TOML
     fi
     success "Generated pyproject.toml"
@@ -419,6 +420,11 @@ else
     dim "  Skipped (--wheel-only not active or --exe-only was set)"
 fi
 
+#step "Preparing runtime folders"
+
+run mkdir -p dist/$APP_NAME/config
+run mkdir -p dist/$APP_NAME/reports/logs
+
 
 # =============================================================================
 # STEP 8 — Build PyInstaller executable
@@ -452,6 +458,7 @@ if $DO_EXE; then
     PYINSTALLER_CMD=(
         "$VENV_PYTHON" -m PyInstaller
         "$SPEC_FILE"
+        --collect-all fintrack #All submodules rebundled
         --noconfirm          # overwrite dist/ without asking
         --clean              # always start from a clean build cache
         $PYINSTALLER_FLAGS
@@ -505,6 +512,11 @@ fi
 # STEP 9 — Final summary
 # =============================================================================
 step "Build complete"
+
+# Copy Windows scheduler script
+if [[ -f "scripts/setup_task_scheduler.bat" ]]; then
+    run cp "scripts/setup_task_scheduler.bat" "dist/$APP_NAME/"
+fi
 
 echo ""
 if $DO_WHEEL && [[ -n "${WHEEL_FILE:-}" ]]; then

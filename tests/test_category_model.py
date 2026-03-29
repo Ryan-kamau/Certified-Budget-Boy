@@ -1,7 +1,7 @@
-from core.database import DatabaseConnection
-from models.user_model import UserModel
+from fintrack.core.database import DatabaseConnection
+from fintrack.models.user_model import UserModel
 from pprint import pprint
-from models.category_model import CategoryModel
+from fintrack.models.category_model import CategoryModel
 from datetime import datetime
 
 

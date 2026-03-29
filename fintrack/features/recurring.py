@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta, date
-from models.transactions_model import TransactionModel
-from models.category_model import CategoryModel
-from models.account_model import AccountModel
-from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
+from fintrack.models.transactions_model import TransactionModel
+from fintrack.models.category_model import CategoryModel
+from fintrack.models.account_model import AccountModel
+from fintrack.core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 import mysql.connector
 import json
 

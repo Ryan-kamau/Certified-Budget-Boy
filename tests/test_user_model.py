@@ -1,6 +1,6 @@
 # tests/user_model_test.py
-from core.database import DatabaseConnection
-from models.user_model import UserModel
+from fintrack.core.database import DatabaseConnection
+from fintrack.models.user_model import UserModel
 
 
 def main():

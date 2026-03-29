@@ -12,14 +12,14 @@ import os
 # ============================================================================
 # TODO: UPDATE THESE IMPORTS BASED ON YOUR PROJECT STRUCTURE
 # ============================================================================
-from core.database import DatabaseConnection
-from models.user_model import UserModel
-from features.export_reports import (
+from fintrack.core.database import DatabaseConnection
+from fintrack.models.user_model import UserModel
+from fintrack.features.export_reports import (
     ExportService,
     ExportConfig,
     ExportError
 )
-from features.search import (
+from fintrack.features.search import (
     TransactionSearchRequest,
     CategorySearchRequest,
     AccountSearchRequest,

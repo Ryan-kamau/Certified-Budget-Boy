@@ -50,11 +50,14 @@ def _get_project_root() -> Path:
       - Frozen inside a PyInstaller exe   (standalone)
     """
     if getattr(sys, "frozen", False):
-        # PyInstaller sets sys._MEIPASS to the temp extraction folder.
-        # The exe itself sits one level above that.
         return Path(sys.executable).parent
-    # Normal Python: go up one level from scripts/
-    return Path(__file__).resolve().parent.parent
+
+    # If running inside installed package → use CWD
+    if "site-packages" in str(Path(__file__).resolve()):
+        return Path.cwd()
+
+    # Dev mode → go up OUTSIDE fintrack
+    return Path(__file__).resolve().parents[2]
 
 
 def _find_seeds_sql() -> Path:
@@ -72,9 +75,10 @@ def _find_seeds_sql() -> Path:
 
     # Normal disk locations
     candidates = [
-        _get_project_root() / "data" / "seeds.sql",
-        Path("data") / "seeds.sql",
-        Path("seeds.sql"),
+    _get_project_root() / "fintrack" / "data" / "seeds.sql",
+    _get_project_root() / "data" / "seeds.sql",
+    Path("fintrack/data/seeds.sql"),
+    Path("data/seeds.sql"),
     ]
     for p in candidates:
         if p.exists():

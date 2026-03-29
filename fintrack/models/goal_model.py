@@ -36,9 +36,9 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict, field
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
-from models.account_model import AccountModel
-from models.category_model import CategoryModel
-from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
+from fintrack.models.account_model import AccountModel
+from fintrack.models.category_model import CategoryModel
+from fintrack.core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 import json
 import mysql.connector
 

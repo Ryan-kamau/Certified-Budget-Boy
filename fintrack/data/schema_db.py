@@ -9,7 +9,7 @@ Works from:
 """
 
 from pathlib import Path
-from core.database import DatabaseConnection
+from fintrack.core.database import DatabaseConnection
 import mysql.connector
 
 

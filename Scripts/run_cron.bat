@@ -98,7 +98,7 @@ exit /b 2
 :found_python
 
 REM ── Run the cron runner ──────────────────────────────────────────────────────
-"%PYTHON_EXE%" "%PROJECT_ROOT%\scripts\cron_runner.py" %* >> "%RUN_LOG%" 2>&1
+"%PYTHON_EXE%" -m fintrack.cron.cron_runner %* >> "%RUN_LOG%" 2>&1
 set "EXIT_CODE=%ERRORLEVEL%"
 
 REM ── Record exit code ────────────────────────────────────────────────────────

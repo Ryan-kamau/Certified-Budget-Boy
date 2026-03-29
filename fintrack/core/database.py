@@ -1,28 +1,62 @@
 #database connection setup
 import mysql.connector
+from importlib.resources import files
+import os
+import sys
 from mysql.connector import Error
 import configparser
-import os
-from core.utils import ConfigurationError, error_logger
+from fintrack.core.utils import ConfigurationError, error_logger
+from pathlib import Path
 
 class DatabaseConnection:
     def __init__(self):
         self.connection = None
 
+
+
+    def _get_runtime_root(self) -> Path:
+        """Return the correct runtime root across all environments."""
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).parent  # EXE location
+        return Path.cwd()  # pip or dev
+
+
     def _load_config(self):
-        """Reads database credentials from config/config.ini safely."""
+        """Load DB config with fallback + setup integration."""
         config = configparser.ConfigParser()
 
-        #connect database path with config.ini path
-        BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        config_path = os.path.join(BASE_DIR, "config", "config.ini")
+        # ── 1. ENV override (highest priority) ───────────────────
+        env_path = os.getenv("FINTRACK_CONFIG")
+        if env_path:
+            config_path = Path(env_path)
+        else:
+            # ── 2. Default runtime location ───────────────────────
+            config_path = self._get_runtime_root() / "config" / "config.ini"
 
-        if not os.path.exists(config_path):
+        # ── 3. If config missing → guide user to setup ───────────
+        if not config_path.exists():
+            try:
+                template = files("fintrack.config").joinpath("config.template.ini")
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_path.write_text(template.read_text())
+            except Exception:
+                pass
             raise ConfigurationError(
-                f"Config file not found: {config_path}. "
-                "Ensure config/config.ini exists with a [mysql] section."
+                f"Config file not found at {config_path}\n\n"
+                "Run setup first:\n"
+                "  fintrack-setup\n"
+                "  OR\n"
+                "  budget-tracker --setup"
             )
+
+        # ── 4. Load config ───────────────────────────────────────
         config.read(config_path)
+
+        if "mysql" not in config:
+            raise ConfigurationError(
+                f"Invalid config file: {config_path}\n"
+                "Missing [mysql] section."
+            )
 
         return {
             'host' : config.get('mysql', 'host'),

@@ -1,6 +1,6 @@
-from core.database import DatabaseConnection
-from models.user_model import UserModel
-from features.recurring import RecurringModel
+from fintrack.core.database import DatabaseConnection
+from fintrack.models.user_model import UserModel
+from fintrack.features.recurring import RecurringModel
 from datetime import datetime, timedelta, date
 from pprint import pprint
 

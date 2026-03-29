@@ -4,10 +4,10 @@ from dataclasses import dataclass, asdict, field
 from tkinter import N
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import date, datetime
-from models.category_model import CategoryModel
-from features.balance import BalanceService
-from models.account_model import AccountModel
-from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
+from fintrack.models.category_model import CategoryModel
+from fintrack.features.balance import BalanceService
+from fintrack.models.account_model import AccountModel
+from fintrack.core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 import mysql.connector
 import json
 

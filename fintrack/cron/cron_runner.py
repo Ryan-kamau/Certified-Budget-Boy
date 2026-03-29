@@ -75,16 +75,21 @@ except Exception:
     pass
 
 # ── Add project root to sys.path so all project imports work ─────────────────
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+def _get_runtime_root() -> Path:
+    """Return correct runtime root across all environments."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent  # EXE location
+    return Path.cwd()  # pip + dev
+
+RUNTIME_ROOT = _get_runtime_root()
+
 
 # ── Project imports ───────────────────────────────────────────────────────────
-from core.database import DatabaseConnection
-from core.scheduler import Scheduler
-from core.utils import ConfigurationError, DatabaseError, error_logger
-from features.balance import BalanceService
-from features.goals import GoalService
+from fintrack.core.database import DatabaseConnection
+from fintrack.core.scheduler import Scheduler
+from fintrack.core.utils import ConfigurationError, DatabaseError, error_logger
+from fintrack.features.balance import BalanceService
+from fintrack.features.goals import GoalService
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -92,9 +97,9 @@ from features.goals import GoalService
 # ════════════════════════════════════════════════════════════════════════════
 
 VALID_JOBS   = {"recurring", "goals", "health"}
-LOG_DIR      = PROJECT_ROOT / "reports" / "logs"
-CRON_LOG     = LOG_DIR / "cron.log"
-LOCK_FILE    = LOG_DIR / "cron.lock"   # prevents overlapping runs
+LOG_DIR   = RUNTIME_ROOT / "reports" / "logs"
+CRON_LOG  = LOG_DIR / "cron.log"
+LOCK_FILE = LOG_DIR / "cron.lock"
 
 JOB_RECURRING = "recurring"
 JOB_GOALS     = "goals"
@@ -118,7 +123,7 @@ def _build_cron_logger(verbose: bool, quiet: bool) -> logging.Logger:
     logger.setLevel(logging.DEBUG)
     logger.propagate = False
 
-    if logger.handlers:
+    if logger.hasHandlers():
         return logger   # already configured (e.g. in tests)
 
     fmt = logging.Formatter(

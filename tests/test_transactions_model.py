@@ -1,6 +1,6 @@
-from core.database import DatabaseConnection
-from models.user_model import UserModel
-from models.transactions_model import TransactionModel
+from fintrack.core.database import DatabaseConnection
+from fintrack.models.user_model import UserModel
+from fintrack.models.transactions_model import TransactionModel
 from datetime import date
 from pprint import pprint
 

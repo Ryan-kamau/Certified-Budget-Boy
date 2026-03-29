@@ -56,10 +56,9 @@ dependencies = [
 #   fintrack       → launches main.py (the full app)
 #   fintrack-cron  → launches the standalone cron runner
 [project.scripts]
-fintrack      = "main:main"
-fintrack-setup = "scripts.db_setup:main" 
-fintrack-cron = "scripts.cron_runner:main"
- 
+fintrack        = "fintrack.main:main"
+fintrack-setup  = "fintrack.setup.db_setup:main"
+fintrack-cron   = "fintrack.cron.cron_runner:main"
  
 # ── Optional extras ───────────────────────────────────────────────────────────
 [project.optional-dependencies]
@@ -74,15 +73,14 @@ dev = [
 # ── Package discovery ─────────────────────────────────────────────────────────
 [tool.setuptools.packages.find]
 where   = ["."]
-include = ["core*", "models*", "scripts*", "features*"]
-exclude = ["tests*", "data*", "reports*", "logs*"]
- 
+include = ["fintrack*"]
+exclude = ["tests*", "reports*", "logs*"]
+
 # Bundle non-Python files into the distribution
 [tool.setuptools.package-data]
-"*" = [
-    "config/config.ini.example",
-    "data/seeds.sql",
-    "*.md",
+fintrack = [
+    "config/*.template.ini",
+    "data/*.sql"
 ]
  
  

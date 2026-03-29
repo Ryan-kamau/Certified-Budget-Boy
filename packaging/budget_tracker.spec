@@ -60,7 +60,7 @@ ONEFILE = False
 # ── Application metadata ─────────────────────────────────────────────────────
 APP_NAME    = "FinTrack"
 APP_VERSION = "1.0.0"
-ENTRY_POINT = "main.py"
+ENTRY_POINT = "fintrack/main.py"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 # When spec is run with `pyinstaller budget_tracker.spec` from the project
@@ -97,10 +97,16 @@ project_datas = [
     # Config template (NOT config.ini — that has DB credentials).
     # The app reads config/config.ini at runtime; the user must supply it.
     # We ship the template so users know exactly what to fill in.
-    (str(PROJ_ROOT / 'config' / 'config.ini.template'), 'config'),
+    (str(PROJ_ROOT / 'fintrack' / 'config' / 'config.template.ini'), 'fintrack/config'),
 
     # Report template directory (HTML/CSS templates used by export_reports.py)
     (str(PROJ_ROOT / 'reports' / 'templates'), 'reports/templates'),
+
+    #Mysql data thatis going to be used by db_setup.py
+    (str(PROJ_ROOT / 'fintrack' / 'data' / 'seeds.sql'), 'data'),
+    #Windows scheduler scripts 
+    (str(PROJ_ROOT / 'scripts' / 'run_cron.bat'), 'scripts'),
+    (str(PROJ_ROOT / 'scripts' / 'setup_task_scheduler.bat'), 'scripts'),
 ]
 
 # Only include paths that actually exist in the project at build time
@@ -282,27 +288,32 @@ hidden_imports = [
     # PyInstaller resolves these from the project root but listing them
     # explicitly ensures they are always included even if the auto-scan
     # misses a conditional import path.
-    'core',
-    'core.database',
-    'core.scheduler',
-    'core.utils',
-    'core.cli_helpers',
-    'models',
-    'models.user_model',
-    'models.account_model',
-    'models.category_model',
-    'models.transactions_model',
-    'models.analytics_model',
-    'models.goal_model',
-    'features',
-    'features.balance',
-    'features.goals',
-    'features.charts',
-    'features.dashboard',
-    'features.search',
-    'features.recurring',
-    'features.export_reports',
-    'features.insights',
+    'fintrack.core',
+    'fintrack.core.database',
+    'fintrack.core.scheduler',
+    'fintrack.core.utils',
+    'fintrack.core.cli_helpers',
+    'fintrack.models',
+    'fintrack.models.user_model',
+    'fintrack.models.account_model',
+    'fintrack.models.category_model',
+    'fintrack.models.transactions_model',
+    'fintrack.models.analytics_model',
+    'fintrack.models.goal_model',
+    'fintrack.features',
+    'fintrack.features.balance',
+    'fintrack.features.goals',
+    'fintrack.features.charts',
+    'fintrack.features.dashboard',
+    'fintrack.features.search',
+    'fintrack.features.recurring',
+    'fintrack.features.export_reports',
+    'fintrack.features.insights',
+    'fintrack.cron',
+    'fintrack.cron.cron_runner',
+
+    'fintrack.setup',
+    'fintrack.setup.db_setup',
 
     # Collected by collect_all above — merged below
     *_mpl_h,
@@ -338,7 +349,7 @@ excludes = [
     'wx', 'gi',
 
     # Scientific extras not needed
-    'scipy', 'sklearn', 'sklearn',
+    'scipy',  'sklearn',
     'statsmodels', 'sympy', 'cvxpy',
 
     # Database backends other than MySQL
@@ -428,10 +439,8 @@ a = Analysis(
     scripts=[ENTRY_POINT],
 
     pathex=[
-        str(PROJ_ROOT),           # project root on sys.path
-        str(PROJ_ROOT / 'core'),
-        str(PROJ_ROOT / 'models'),
-        str(PROJ_ROOT / 'features'),
+        str(PROJ_ROOT),
+        str(PROJ_ROOT / 'fintrack'),
     ],
 
     binaries=(

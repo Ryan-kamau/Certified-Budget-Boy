@@ -45,11 +45,13 @@ from rich.table import Table
 from rich.text import Text
 
 # ── Project imports ───────────────────────────────────────────────────────────
-from models.analytics_model import AnalyticsModel
-from features.balance import BalanceService
-from models.transactions_model import TransactionModel
-from core.scheduler import Scheduler
-from features.charts import FinanceCharts
+from fintrack.models.analytics_model import AnalyticsModel
+from fintrack.features.balance import BalanceService
+from fintrack.models.transactions_model import TransactionModel
+from fintrack.core.scheduler import Scheduler
+from fintrack.features.charts import FinanceCharts
+from fintrack.core.database import DatabaseConnection
+from fintrack.models.user_model import UserModel
 
 console = Console()
 
@@ -522,8 +524,8 @@ class Dashboard:
 # ════════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
-    from core.database import DatabaseConnection
-    from models.user_model import UserModel
+    from fintrack.core.database import DatabaseConnection
+    from fintrack.models.user_model import UserModel
 
     console.print("\n[bold cyan]🔐 Finance Dashboard — Login[/bold cyan]\n")
     db   = DatabaseConnection()

@@ -53,7 +53,7 @@ except ImportError:
 import mysql.connector
 
 # Import search service for data retrieval
-from features.search import (
+from fintrack.features.search import (
     SearchService,
     TransactionSearchRequest,
     CategorySearchRequest,
@@ -71,7 +71,7 @@ from features.search import (
 )
 
 # Import utilities
-from core.utils import (
+from fintrack.core.utils import (
     DateRangeValidator,
     FormatHelper,
     ValidationPatterns,

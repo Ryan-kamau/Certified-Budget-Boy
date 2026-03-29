@@ -18,3 +18,5 @@ reports/exports
 config/config.ini
 config/db_config.py
 tests/__pycache__/
+fintrack/config/*.ini
+fintrack/config

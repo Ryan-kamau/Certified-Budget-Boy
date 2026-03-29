@@ -51,8 +51,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import mysql.connector
 
-from models.analytics_model import AnalyticsModel
-from core.utils import DatabaseError, ValidationError, error_logger
+from fintrack.models.analytics_model import AnalyticsModel
+from fintrack.core.utils import DatabaseError, ValidationError, error_logger
 
 
 # ============================================================

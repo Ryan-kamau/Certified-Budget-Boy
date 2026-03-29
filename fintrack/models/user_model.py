@@ -1,7 +1,7 @@
 #User_model
 from typing import Optional, Dict, List, Any
-from core.database import DatabaseConnection
-from core.utils import error_logger
+from fintrack.core.database import DatabaseConnection
+from fintrack.core.utils import error_logger
 from mysql.connector import Error
 import bcrypt
 

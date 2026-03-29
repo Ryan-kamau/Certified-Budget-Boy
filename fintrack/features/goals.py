@@ -41,17 +41,17 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 import mysql.connector
-from core.utils import error_logger
-from models.goal_model import (
+from fintrack.core.utils import error_logger
+from fintrack.models.goal_model import (
     GoalModel,
     GoalError,
     GoalNotFoundError,
     GoalValidationError,
     GoalDatabaseError,
 )
-from models.transactions_model import TransactionModel
-from models.account_model import AccountModel
-from models.category_model import CategoryModel
+from fintrack.models.transactions_model import TransactionModel
+from fintrack.models.account_model import AccountModel
+from fintrack.models.category_model import CategoryModel
 
 
 # ============================================================

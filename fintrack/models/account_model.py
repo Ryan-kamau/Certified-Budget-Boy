@@ -1,7 +1,7 @@
 # models/accounts_model.py
 from __future__ import annotations
 from dataclasses import dataclass, asdict, field
-from core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
+from fintrack.core.utils import DatabaseError, ValidationError, NotFoundError, error_logger
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 import mysql.connector

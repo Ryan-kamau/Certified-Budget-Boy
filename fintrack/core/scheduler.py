@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 import mysql.connector
 
 # Import from your other modules
-from features.recurring import RecurringModel, RecurringError, RecurringNotFoundError, RecurringValidationError
-from core.utils import ValidationError, DatabaseError, error_logger
+from fintrack.features.recurring import RecurringModel, RecurringError, RecurringNotFoundError, RecurringValidationError
+from fintrack.core.utils import ValidationError, DatabaseError, error_logger
 class SchedulerError(Exception): 
     """Base exception for Scheduler-specific errors"""
     pass

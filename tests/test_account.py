@@ -14,9 +14,9 @@ from datetime import datetime
 # ============================================================================
 # TODO: UPDATE THESE IMPORTS BASED ON YOUR PROJECT STRUCTURE
 # ============================================================================
-from core.database import DatabaseConnection
-from models.user_model import UserModel
-from models.account_model import AccountModel  # TODO: Update path if needed
+from fintrack.core.database import DatabaseConnection
+from fintrack.models.user_model import UserModel
+from fintrack.models.account_model import AccountModel  # TODO: Update path if needed
 
 
 def print_menu():
