@@ -48,6 +48,7 @@ dependencies = [
     "openpyxl>=3.1.0",
     "reportlab>=4.1.0",
     "pandas>=2.2.0",
+    "bcrypt>=5.0.0"
 ]
  
  
@@ -59,6 +60,7 @@ dependencies = [
 fintrack        = "fintrack.main:main"
 fintrack-setup  = "fintrack.setup.db_setup:main"
 fintrack-cron   = "fintrack.cron.cron_runner:main"
+fintrack-scheduler = "fintrack.setup.scheduler_setup:main"
  
 # ── Optional extras ───────────────────────────────────────────────────────────
 [project.optional-dependencies]

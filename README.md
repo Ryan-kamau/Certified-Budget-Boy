@@ -28,9 +28,9 @@ A personal finance tracker that runs entirely in your terminal. Track income, ex
 
 ## Requirements
 
-- Python 3.9+ (not needed for the standalone exe)
+- Python 3.10+ (not needed for the standalone exe)
 - MySQL 8.0+
-- Windows 10/11, Linux, or macOS
+- Windows 9/10/11, Linux, or macOS
 
 ---
 
@@ -142,21 +142,24 @@ On first run, the registration screen appears. The **first registered user autom
 ## Project structure
 
 ```
-budget_tracker/
-├── main.py              # Entry point
-├── config/              # DB config (config.ini — you create this)
-├── core/                # Database, scheduler, CLI helpers, utilities
-├── models/              # User, account, category, transaction, analytics, goal
-├── features/            # Balance, goals, recurring, search, dashboard, charts,
-│                        # export, insights
-├── scripts/             # Build script, cron runner, Windows Task Scheduler setup
-├── tests/               # Interactive CLI test scripts for every module
-├── data/
-│   └── seeds.sql        # Database schema (run this to create all tables)
-└── reports/
-    └── exports/         # Generated CSV, PDF, and Excel files land here
-```
-
+fintrack/
+├── fintrack/
+│   ├── main.py              # Unified entry point (CLI router)
+│   ├── app.py               # Main application logic
+│   ├── core/                # Database, scheduler, utilities
+│   ├── models/              # Data models
+│   ├── features/            # Business features
+│   ├── cron/                # Cron runner
+│   ├── setup/               # DB + scheduler setup
+│   └── data/                # SQL schema & seeds
+│
+├── config/                  # User config (NOT committed)
+├── reports/                 # Exports + logs
+├── scripts/                 # Build tools only
+├── packaging/               # PyInstaller spec
+├── tests/                   # Test suite
+├── pyproject.toml
+└── README.md
 ---
 
 ## Automatic recurring transactions

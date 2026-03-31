@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
+import sys
 import traceback
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -273,11 +275,6 @@ class ErrorLogger:
     Each file capped at 10 MB.  Python's RotatingFileHandler handles the
     rename automatically on each app run when the size threshold is hit.
     """
-
-    # Path to the directory where the log file will be created.
-    # Matches the reports/exports/ pattern already used by ExportService.
-    LOG_DIR = "reports/logs"
-
     # Single log file name — one file for the whole application.
     LOG_FILE = "errors.log"
 
@@ -297,6 +294,23 @@ class ErrorLogger:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    def _get_runtime_root(self) -> Path:
+        """
+        Returns a stable runtime directory for logs/config.
+
+        Priority:
+        1. ENV override (FINTRACK_HOME)
+        2. Frozen EXE directory
+        3. Current working directory (dev fallback)
+        """
+        env = os.getenv("FINTRACK_HOME")
+        if env:
+            return Path(env)
+
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+
+        return Path.cwd()
 
     def log_error(
         self,
@@ -421,9 +435,12 @@ class ErrorLogger:
         """
         # Create reports/logs/ if it doesn't already exist.
         # exist_ok=True means no error if it's already there.
-        os.makedirs(self.LOG_DIR, exist_ok=True)
+        runtime_root = self._get_runtime_root()
+        log_dir = runtime_root / "reports" / "logs"
 
-        log_path = os.path.join(self.LOG_DIR, self.LOG_FILE)
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        log_path = log_dir / self.LOG_FILE
 
         # Use a namespaced logger name so it doesn't collide with any
         # other logger in the application or in third-party libraries.

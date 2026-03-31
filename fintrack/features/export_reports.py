@@ -51,6 +51,7 @@ except ImportError:
     EXCEL_AVAILABLE = False
 
 import mysql.connector
+import sys
 
 # Import search service for data retrieval
 from fintrack.features.search import (
@@ -158,9 +159,26 @@ class ExportService:
         # Ensure output directory exists
         self._ensure_output_dir()
     
+    def _get_runtime_root(self) -> Path:
+
+        env = os.getenv("FINTRACK_HOME")
+        if env:
+            return Path(env)
+
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+
+        return Path.cwd()
+    
     def _ensure_output_dir(self):
         """Create output directory if it doesn't exist."""
-        Path(self.config.output_dir).mkdir(parents=True, exist_ok=True)
+        runtime_root = self._get_runtime_root()
+        output_path = runtime_root / self.config.output_dir
+
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # Optional but VERY useful:
+        self._resolved_output_dir = output_path
 
     # ================================================================
     # CSV EXPORTS
