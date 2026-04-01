@@ -63,23 +63,23 @@ def _get_project_root() -> Path:
 def _find_seeds_sql() -> Path:
     """
     Locate seeds.sql in all scenarios:
-      - Source/pip:    <project_root>/data/seeds.sql
-      - PyInstaller:   sys._MEIPASS/data/seeds.sql  (bundled)
     """
-    # PyInstaller extraction folder
-    if getattr(sys, "frozen", False):
-        meipass = Path(sys._MEIPASS)
-        bundled = meipass / "data" / "seeds.sql"
-        if bundled.exists():
-            return bundled
 
-    # Normal disk locations
+    # ── 1. PyInstaller (works for BOTH onefile + onedir) ──
+    if getattr(sys, "frozen", False):
+        base_path = Path(sys.executable).parent
+        candidate = base_path / "data" / "seeds.sql"
+        if candidate.exists():
+            return candidate
+
+    # ── 2. Development / pip install ──
     candidates = [
-    _get_project_root() / "fintrack" / "data" / "seeds.sql",
-    _get_project_root() / "data" / "seeds.sql",
-    Path("fintrack/data/seeds.sql"),
-    Path("data/seeds.sql"),
+        _get_project_root() / "fintrack" / "data" / "seeds.sql",
+        _get_project_root() / "data" / "seeds.sql",
+        Path("fintrack/data/seeds.sql"),
+        Path("data/seeds.sql"),
     ]
+
     for p in candidates:
         if p.exists():
             return p
@@ -88,7 +88,6 @@ def _find_seeds_sql() -> Path:
         "seeds.sql not found. Expected it at data/seeds.sql "
         "relative to the project root."
     )
-
 
 def _find_config_path() -> Path:
     """Find or create the config directory."""
