@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.resources as pkg_resources
 import configparser
 import os
 import sys
@@ -61,21 +62,23 @@ def _get_project_root() -> Path:
 
 
 def _find_seeds_sql() -> Path:
-    """
-    Locate seeds.sql in all scenarios:
-    """
-
-    # ── 1. PyInstaller (works for BOTH onefile + onedir) ──
+    # ── 1. PyInstaller ──
     if getattr(sys, "frozen", False):
         base_path = Path(sys.executable).parent
         candidate = base_path / "data" / "seeds.sql"
         if candidate.exists():
             return candidate
 
-    # ── 2. Development / pip install ──
+    # ── 2. Installed package (pip) ──
+    try:
+        return Path(
+            pkg_resources.files("fintrack.data").joinpath("seeds.sql")
+        )
+    except Exception:
+        pass
+
+    # ── 3. Dev fallback ──
     candidates = [
-        _get_project_root() / "fintrack" / "data" / "seeds.sql",
-        _get_project_root() / "data" / "seeds.sql",
         Path("fintrack/data/seeds.sql"),
         Path("data/seeds.sql"),
     ]
@@ -84,10 +87,7 @@ def _find_seeds_sql() -> Path:
         if p.exists():
             return p
 
-    raise FileNotFoundError(
-        "seeds.sql not found. Expected it at data/seeds.sql "
-        "relative to the project root."
-    )
+    raise FileNotFoundError("seeds.sql not found.")
 
 def _find_config_path() -> Path:
     """Find or create the config directory."""
