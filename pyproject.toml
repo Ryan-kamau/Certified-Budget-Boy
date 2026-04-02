@@ -78,7 +78,6 @@ where   = ["."]
 include = ["fintrack*"]
 exclude = ["tests*", "reports*", "logs*"]
 
-# Bundle non-Python files into the distribution
 [tool.setuptools.package-data]
 fintrack = [
     "config/*.template.ini",
