@@ -57,16 +57,17 @@ from PyInstaller.utils.hooks import (
 # ── Toggle: True = single .exe  |  False = directory (faster cold start) ────
 ONEFILE = False
 
+PROJ_ROOT = Path(SPECPATH).parent
 # ── Application metadata ─────────────────────────────────────────────────────
 APP_NAME    = "FinTrack"
 APP_VERSION = "1.0.0"
-ENTRY_POINT = "fintrack/main.py"
+ENTRY_POINT = str(PROJ_ROOT / "fintrack" / "main.py")
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 # When spec is run with `pyinstaller budget_tracker.spec` from the project
 # root, SPECPATH is the project root.  We use it as the anchor for all
 # relative paths so the build works regardless of CWD.
-PROJ_ROOT = Path(SPECPATH)
+print("DEBUG PROJ_ROOT:", PROJ_ROOT)
 
 # =============================================================================
 # STEP 1 — collect_all for heavy packages
@@ -160,6 +161,7 @@ hidden_imports = [
     'mysql.connector.types',
     'mysql.connector.utils',
     'mysql.connector.version',
+    'unittest',
 
     # ── bcrypt ───────────────────────────────────────────────────────────────
     # Loaded by user_model.py for password hashing.  The C extension is
@@ -209,6 +211,7 @@ hidden_imports = [
     'matplotlib.backends._backend_agg',
     'matplotlib.backends._backend_tk',
     'matplotlib.backends._tkagg',
+    
 
     # ── pandas internal C extensions ─────────────────────────────────────────
     # These .pyd / .so files are referenced by string in pandas internals.
@@ -336,7 +339,7 @@ hidden_imports = sorted(set(hidden_imports))
 
 excludes = [
     # Test infrastructure
-    'pytest', 'unittest', 'doctest',
+    'pytest', 'doctest',
     '_pytest', 'pytest_asyncio',
 
     # Jupyter / IPython ecosystem (matplotlib pulls these in transitively)
@@ -420,7 +423,7 @@ if 'MPLBACKEND' not in os.environ:
 import tempfile, atexit
 
 _hook_fd, _hook_path = tempfile.mkstemp(suffix='.py', prefix='fintrack_rthook_')
-with os.fdopen(_hook_fd, 'w') as _f:
+with os.fdopen(_hook_fd, 'w', encoding='utf-8') as _f:
     _f.write(_RUNTIME_HOOK_SRC)
 
 def _cleanup_hook():

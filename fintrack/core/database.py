@@ -13,13 +13,19 @@ class DatabaseConnection:
         self.connection = None
 
 
-
     def _get_runtime_root(self) -> Path:
         """Return the correct runtime root across all environments."""
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable).parent  # EXE location
-        return Path.cwd()  # pip or dev
 
+        # ── PyInstaller (onefile temp extraction) ──
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            return Path(sys._MEIPASS)
+
+        # ── PyInstaller (onedir / exe location) ──
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).parent
+
+        # ── Pip install or dev ──
+        return Path.cwd()
 
     def _load_config(self):
         """Load DB config with fallback + setup integration."""

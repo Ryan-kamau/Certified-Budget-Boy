@@ -68,6 +68,20 @@ def _find_seeds_sql() -> Path:
         candidate = base_path / "data" / "seeds.sql"
         if candidate.exists():
             return candidate
+    
+    # ── PyInstaller (robust: handle _MEIPASS) ──
+    if getattr(sys, "frozen", False):
+        # 1. Try PyInstaller temp extraction dir (onefile mode)
+        if hasattr(sys, "_MEIPASS"):
+            meipass_path = Path(sys._MEIPASS) / "data" / "seeds.sql"
+            if meipass_path.exists():
+                return meipass_path
+
+        # 2. Try alongside the executable (onedir mode)
+        base_path = Path(sys.executable).parent
+        candidate = base_path / "data" / "seeds.sql"
+        if candidate.exists():
+            return candidate
 
     # ── 2. Installed package (pip) ──
     try:

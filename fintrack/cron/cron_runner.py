@@ -74,14 +74,25 @@ try:
 except Exception:
     pass
 
-# ── Add project root to sys.path so all project imports work ─────────────────
+# ── Resolve runtime root (EXE / pip / dev) ────────────────────────────────────
 def _get_runtime_root() -> Path:
     """Return correct runtime root across all environments."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent  # EXE location
-    return Path.cwd()  # pip + dev
 
+    # If running inside installed package → use CWD
+    if "site-packages" in str(Path(__file__).resolve()):
+        return Path.cwd()
+
+    # Dev mode → go up OUTSIDE fintrack
+    return Path(__file__).resolve().parents[1]
+
+
+# ── Ensure project root is on sys.path ────────────────────────────────────────
 RUNTIME_ROOT = _get_runtime_root()
+
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
 
 
 # ── Project imports ───────────────────────────────────────────────────────────
