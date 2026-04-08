@@ -526,7 +526,7 @@ def ask_date(
                 ValidationPatterns.DATE_PRESETS,
                 required=True
             )
-            return DateRangeValidator.get_preset_range(choice)
+            return DateRangeValidator.get_preset_range(choice)[0] #Return the first date of the range
 
         # --- Blank handling ---
         if not raw:

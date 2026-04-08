@@ -14,17 +14,18 @@ class DatabaseConnection:
 
 
     def _get_runtime_root(self) -> Path:
-        """Return the correct runtime root across all environments."""
+        """Return a persistent runtime directory (never temp)."""
 
-        # ── PyInstaller (onefile temp extraction) ──
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            return Path(sys._MEIPASS)
+        # 1. ENV override (power users / testing)
+        env = os.getenv("FINTRACK_HOME")
+        if env:
+            return Path(env)
 
-        # ── PyInstaller (onedir / exe location) ──
+        # 2. If running as exe → use directory of exe
         if getattr(sys, "frozen", False):
             return Path(sys.executable).parent
 
-        # ── Pip install or dev ──
+        # 3. Dev / pip fallback
         return Path.cwd()
 
     def _load_config(self):

@@ -55,7 +55,7 @@ from PyInstaller.utils.hooks import (
 )
 
 # ── Toggle: True = single .exe  |  False = directory (faster cold start) ────
-ONEFILE = False
+ONEFILE = True
 
 PROJ_ROOT = Path(SPECPATH).parent
 # ── Application metadata ─────────────────────────────────────────────────────
