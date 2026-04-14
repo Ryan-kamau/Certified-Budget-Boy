@@ -443,10 +443,10 @@ def menu_accounts(ctx: AppCtx) -> None:
                 acc_type = ask_choice("Account type", ACCOUNT_TYPES, default="bank")
                 balance  = ask_float("Opening balance", default=0.0, min_val=0)
                 desc     = ask_str("Description", required=False)
-                is_global = ask_str("Is global? (y/n)", default="n", required=False)
+                is_global = ask_confirm("Global or Own viewership? ", default=False)
                 opening_balance = ask_float("Opening balance", default=balance, min_val=0)
  
-                result = ctx.accounts.create_account(
+                result = ctx.accounts.create(
                     name=name,
                     account_type=acc_type,
                     is_global=is_global,
@@ -646,9 +646,9 @@ def menu_categories(ctx: AppCtx) -> None:
                 name      = ask_str("Category name")
                 parent_id = ask_int("Parent category ID", required=False)
                 desc      = ask_str("Description", required=False)
-                is_global     = ask_str("Is global? (y/n)", required=False, default="n")
+                is_global     = ask_confirm("Global or Own viewership", default=False)
  
-                result = ctx.categories.create_category(
+                result = ctx.categories.add_category(
                     name=name,
                     parent_id=parent_id,
                     description=desc,
@@ -966,7 +966,7 @@ def _add_transaction(ctx: AppCtx) -> None:
         source_account_id=source_account_id,
         destination_account_id=destination_account_id,
         allow_overdraft=allow_od,
-        is_global=0,
+        is_global=False,
     )
  
     if result.get("transaction_id"):
@@ -1529,7 +1529,7 @@ def _create_goal(ctx: AppCtx) -> None:
     data = dict(
         name=name, goal_type=goal_type, target_amount=target,
         start_date=start_date, end_date=end_date,
-        description=desc, status=status, is_global=int(is_global),
+        description=desc, status=status, is_global=is_global,
     )
     if cat_id:
         data["category_id"] = cat_id
@@ -1729,7 +1729,7 @@ def _create_recurring(ctx: AppCtx) -> None:
         account_id=account_id,
         source_account_id=source_account_id,
         destination_account_id=destination_account_id,
-        is_global=int(is_global),
+        is_global=is_global,
     )
     print_result(result)
     pause()

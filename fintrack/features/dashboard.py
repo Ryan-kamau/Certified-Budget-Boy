@@ -145,7 +145,7 @@ class Dashboard:
 
     def _load_snapshot(
         self,
-        top_n: int = 10,
+        top_n: int = 20,
         recent_limit: int = 20,
         upcoming_days: int = 7,
     ) -> Dict[str, Any]:
