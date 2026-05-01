@@ -443,7 +443,7 @@ def menu_accounts(ctx: AppCtx) -> None:
                 acc_type = ask_choice("Account type", ACCOUNT_TYPES, default="bank")
                 balance  = ask_float("Opening balance", default=0.0, min_val=0)
                 desc     = ask_str("Description", required=False)
-                is_global = ask_confirm("Global or Own viewership? ", default=False)
+                is_global = ask_confirm("Global Viewership (y/n)? ", default=False)
                 opening_balance = ask_float("Opening balance", default=balance, min_val=0)
  
                 result = ctx.accounts.create(
@@ -514,7 +514,7 @@ def menu_accounts(ctx: AppCtx) -> None:
                         currency_keys ={"balance"},
                         date_keys= {"created_at", "updated_at"}
                     )
-                if ask_confirm(f"Soft-delete account #{acc_id}?"):
+                if ask_confirm(f"Soft-delete account #{acc_id} ?"):
                     result = ctx.accounts.delete_account(acc_id, soft=True)
                     print_result(result)
                 pause()
@@ -584,7 +584,7 @@ def menu_accounts(ctx: AppCtx) -> None:
                         currency_keys ={"balance"},
                         date_keys= {"created_at", "updated_at"}
                     )
-                if ask_confirm(f"Hard-delete account #{acc_id}?"):
+                if ask_confirm(f"Hard-delete account #{acc_id} ?"):
                     result = ctx.accounts.delete_account(acc_id, soft=False)
                     print_result(result)
                 pause()
@@ -646,7 +646,7 @@ def menu_categories(ctx: AppCtx) -> None:
                 name      = ask_str("Category name")
                 parent_id = ask_int("Parent category ID", required=False)
                 desc      = ask_str("Description", required=False)
-                is_global     = ask_confirm("Global or Own viewership", default=False)
+                is_global     = ask_confirm("Global Viewership ?", default=False)
  
                 result = ctx.categories.add_category(
                     name=name,
@@ -704,7 +704,7 @@ def menu_categories(ctx: AppCtx) -> None:
                             title= f"Category ID {cat_id} to be Soft Deleted",
                             date_keys={"created_at", "updated_at"},
                     )
-                if ask_confirm(f"Soft-delete category #{cat_id}?"):
+                if ask_confirm(f"Soft-delete category #{cat_id} ?"):
                     result = ctx.categories.delete_category(cat_id, soft=True)
                     print_result(result)
                 pause()
@@ -821,7 +821,7 @@ def menu_transactions(ctx: AppCtx) -> None:
         ("Delete Transaction",   "Soft-delete a transaction"),
         ("Restore Transaction",  "Recover a deleted transaction"),
         ("Transaction Audit",    "View change history"),
-        ("Hard Delete"            "Hard Delete A transaction")
+        ("Hard Delete",            "Hard Delete A transaction")
     ]
  
     while True:
@@ -864,8 +864,8 @@ def menu_transactions(ctx: AppCtx) -> None:
                     date_keys={"transaction_date"},
                     style="dim",
                 )
-                soft  = ask_confirm("Soft delete? ")
-                recur = ask_confirm("Delete also its Child Transactions", default=False)
+                soft  = ask_confirm("Soft delete? (y/n)")
+                recur = ask_confirm("Delete also its Child Transactions? ", default=False)
                 result = ctx.transactions.delete_transaction(
                     tx_id, soft=soft, recursive=recur
                 )
@@ -917,7 +917,7 @@ def menu_transactions(ctx: AppCtx) -> None:
                     style="dim",
                 )
                 hard  = ask_confirm("Hard delete? ")
-                recur = ask_confirm("Delete also its Child Transactions", default=False)
+                recur = ask_confirm("Delete also its Child Transactions?", default=False)
                 result = ctx.transactions.delete_transaction(
                     tx_id, soft=hard, recursive=recur
                 )
@@ -1515,7 +1515,7 @@ def _create_goal(ctx: AppCtx) -> None:
     end_date    = ask_date("End date",   required=True)
     desc        = ask_str("Description", required=False)
     status      = ask_choice("Status", GOAL_STATUSES, default="active")
-    is_global   = ask_confirm("Make global?", default=False)
+    is_global   = ask_confirm("Global Viewership?", default=False)
  
     cat_id = None
     acc_id = None
